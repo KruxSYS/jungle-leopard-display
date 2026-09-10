@@ -401,7 +401,8 @@ and a pill is around a kilobyte.
 
 ## Following what's playing
 
-Turn on **Follow what's playing** from the tray and the panel starts mirroring
+Press **Follow music** in the window, or **Follow what's playing** on the tray,
+and the panel starts mirroring
 whatever else on the machine is playing music — a YouTube Music tab, a browser,
 a desktop player. It reads the Windows media session, the same thing that feeds
 the volume-key popup.
@@ -411,7 +412,8 @@ this only watches and draws.
 
 Two things can end up on the glass:
 
-- **The music video**, streamed live, when one can be found.
+- **The music video**, downloaded once and played from disk, when one can be
+  found.
 - **A now-playing card** when one cannot — the album art blurred across the
   panel with the title, artist and progress over it. Most tracks on a music
   service have no video, so this is the common case rather than a consolation
@@ -421,7 +423,8 @@ The card is an ordinary overlay profile called **Now playing**, so it appears in
 the tray menu and can be rearranged, restyled or re-themed in the overlay editor
 like any other. The backdrop it draws on is a 960×480 JPEG the app builds
 itself, small enough to skip ffmpeg entirely — so the card works even on a
-machine that has none.
+machine that has none. While a video is being fetched, a second bar under the
+timeline shows how far along the download is.
 
 Following is remembered between runs: a display left mirroring music is still
 mirroring music after a reboot.
@@ -434,7 +437,8 @@ overlay tokens, so any profile can use it:
 `{music.title}` `{music.artist}` `{music.album}` `{music.source}`
 `{music.state}` `{music.elapsed}` `{music.length}` `{music.remaining}`
 and, as numbers for bars and visibility rules, `music.position`,
-`music.duration`, `music.progress`, `music.playing` and `music.idle`.
+`music.duration`, `music.progress`, `music.playing`, `music.idle`,
+`music.fetching` and `music.fetch`.
 
 `{music.art}` is the current cover's path on disk, which an **image** layer can
 be pointed at — that is how the card shows album art, and it works in any
@@ -453,31 +457,41 @@ the artist's own upload.
 What it picked is shown beside the preview in the main window. That line is the
 answer to "why is it showing *that*".
 
-Results are cached in `music-cache.json` by track, so a song played twice
-searches once. The media URL itself is never cached — those are signed and
-expire within hours.
+Which video matched which track is cached in `music-cache.json`, so a song
+played twice searches once.
 
-**The video path needs ffmpeg to be allowed onto the network.** It fetches the
-stream directly, so a default-deny firewall or a filter like GlassWire will stop
-it, and the failure looks like nothing happening at all. If videos never appear
-but the card always does, check that first:
+### The video is downloaded, not streamed
 
-```sh
-ffmpeg -i https://example.com/anything
-```
+`yt-dlp` fetches the 720p rung to `music-videos\` and the panel plays the file.
+That is not an optimisation, it is what makes the feature work at all.
 
-A timeout there rather than an HTTP error means ffmpeg is being blocked. Putting
-`ffmpeg.exe` beside the app's binaries gives it a fixed path to allow, and is the
-copy the app prefers anyway.
+YouTube serves fragmented MP4 at roughly playback rate, and ffmpeg can only seek
+one by reading the whole file to index it. Measured on a 3½-minute track, every
+seek into a stream cost **106 seconds** before the first frame appeared — the
+same whether the target was 30 seconds in or 120 — against 0.4 seconds with no
+seek at all. A downloaded file has an index, so the same seek takes 0.3 seconds.
+Joining a song already in progress, and following you when you drag the
+scrubber, are both only possible because of that.
+
+It also settles the quality question: the whole 720p rung comes down at whatever
+rate the link allows, rather than being decoded live from a throttled
+connection.
+
+Downloads are swept by age and by size — **Settings → Music** sets both, and
+**Sweep now** applies them immediately. The defaults keep a video for two weeks
+after it was last played, within 4 GB. Unfinished downloads left by skipping
+tracks are cleaned up too.
 
 ### On sync
 
 The panel and your speakers are two independent streams of the same song, and
-the browser's own buffering is an offset this app cannot see or measure. It
-starts the video at the reported position and nudges it back into step only when
-it drifts more than 1.5 seconds, at most once every 20 seconds — a correction
-restarts the decoder and jumps to a keyframe, so doing it more often looks worse
-than the drift does.
+the browser's own buffering is an offset this app cannot see or measure. The
+video starts where the song has reached and both then run at their own steady
+rate.
+
+Dragging the scrubber in the browser is followed within about a second. Small
+drift is deliberately left alone: correcting it restarts the decoder on a
+keyframe, which is more noticeable than the drift itself.
 
 Expect it to be close, not frame-accurate. For a music video that is fine.
 
@@ -610,6 +624,7 @@ startup, so struct drift fails loudly instead of corrupting memory silently.
 | `%LOCALAPPDATA%\JungleLeopardDisplay\overlay-assets\` | images used by overlay layers |
 | `%LOCALAPPDATA%\JungleLeopardDisplay\music-art\` | album art and blurred backdrops, cache |
 | `%LOCALAPPDATA%\JungleLeopardDisplay\music-cache.json` | which video matched which track |
+| `%LOCALAPPDATA%\JungleLeopardDisplay\music-videos\` | downloaded music videos, swept by age and size |
 | `%LOCALAPPDATA%\JungleLeopardDisplay\manager.log` | connection events, errors |
 | `%LOCALAPPDATA%\jl_display\calibration.txt` | **shared** with the CLI |
 | `%LOCALAPPDATA%\jl_display\packs\*.jlp` | preprocessed video frames, **shared** |
