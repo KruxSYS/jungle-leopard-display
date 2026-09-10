@@ -77,7 +77,13 @@ public static class TrackResolver
     ///
     /// Blocking: it launches yt-dlp. Call it off the UI thread.
     /// </summary>
+    /// <param name="maxSeconds">
+    /// The longest candidate worth having, or 0 for no limit. Applied during
+    /// the search so a sensible match further down the results can still win,
+    /// rather than only rejecting the winner afterwards.
+    /// </param>
     public static VideoMatch? Resolve(string title, string artist, double duration,
+                                      double maxSeconds = 0,
                                       CancellationToken token = default)
     {
         if (string.IsNullOrWhiteSpace(title)) return null;
@@ -90,8 +96,8 @@ public static class TrackResolver
 
         if (IsKnownMiss(key)) return null;
 
-        string? id = Search(ytdlp, title, artist, duration, out double seconds,
-            out bool searched, token);
+        string? id = Search(ytdlp, title, artist, duration, maxSeconds,
+            out double seconds, out bool searched, token);
 
         // Only a search that actually ran is worth remembering. A blocked
         // firewall, a dead link or a yt-dlp that fell over is not evidence that
@@ -117,8 +123,8 @@ public static class TrackResolver
     /// video" rather than "could not look". Only the former is worth caching.
     /// </param>
     private static string? Search(YtDlp ytdlp, string title, string artist, double duration,
-                                  out double chosenSeconds, out bool searched,
-                                  CancellationToken token)
+                                  double maxSeconds, out double chosenSeconds,
+                                  out bool searched, CancellationToken token)
     {
         searched = false;
         chosenSeconds = 0;
@@ -171,6 +177,12 @@ public static class TrackResolver
             if (!double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture,
                     out double seconds))
                 continue;                                 // "NA": no length, no confidence
+
+            // Too long to be the song. Skipped here rather than after a winner
+            // is chosen, so a good match further down the results still gets
+            // its chance — an hour-long upload otherwise wins on title and
+            // hides the real one behind it.
+            if (maxSeconds > 0 && seconds > maxSeconds) continue;
 
             string candidate = parts[2];
             string channel = parts.Length > 3 ? parts[3] : "";

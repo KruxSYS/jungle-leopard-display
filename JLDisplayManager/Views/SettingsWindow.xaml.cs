@@ -23,6 +23,7 @@ public partial class SettingsWindow : Window
     // limit", which is why it sits last rather than first.
     private static readonly int[] MusicDaysValues = { 3, 7, 14, 30, 90, 0 };
     private static readonly int[] MusicCacheValues = { 512, 1024, 2048, 4096, 8192, 16384 };
+    private static readonly int[] MusicMaxLengthValues = { 5, 8, 12, 20, 30, 0 };
 
     /// <summary>
     /// The dark ink the other combo boxes set inline in XAML. Items built in
@@ -91,6 +92,8 @@ public partial class SettingsWindow : Window
         MusicVideoBox.IsChecked = s.MusicVideo;
         FillMediaApps(s.MediaSessionApp);
 
+        MusicMaxLengthCombo.SelectedIndex =
+            NearestIndex(MusicMaxLengthValues, s.MusicMaxVideoMinutes);
         MusicDaysCombo.SelectedIndex = NearestIndex(MusicDaysValues, s.MusicCacheDays);
         MusicCacheCombo.SelectedIndex = NearestIndex(MusicCacheValues, s.MusicCacheMB);
         ShowMusicCacheSize();
@@ -444,6 +447,10 @@ public partial class SettingsWindow : Window
         if (MusicCacheCombo.SelectedIndex >= 0)
             _app.Settings.MusicCacheMB = MusicCacheValues[MusicCacheCombo.SelectedIndex];
 
+        if (MusicMaxLengthCombo.SelectedIndex >= 0)
+            _app.Settings.MusicMaxVideoMinutes =
+                MusicMaxLengthValues[MusicMaxLengthCombo.SelectedIndex];
+
         // Pushed down straight away so "Sweep now" uses what is on screen
         // rather than what was set when the follower last started.
         MusicVideoCache.Configure(_app.Settings.MusicCacheMB, _app.Settings.MusicCacheDays);
@@ -652,6 +659,8 @@ public partial class SettingsWindow : Window
             s.MusicCacheDays = MusicDaysValues[MusicDaysCombo.SelectedIndex];
         if (MusicCacheCombo.SelectedIndex >= 0)
             s.MusicCacheMB = MusicCacheValues[MusicCacheCombo.SelectedIndex];
+        if (MusicMaxLengthCombo.SelectedIndex >= 0)
+            s.MusicMaxVideoMinutes = MusicMaxLengthValues[MusicMaxLengthCombo.SelectedIndex];
         if (MediaAppCombo.SelectedItem is ComboBoxItem app) s.MediaSessionApp = app.Tag as string ?? "";
 
         Storage.SaveSettings(s);

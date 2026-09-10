@@ -541,10 +541,27 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
         int version = m.TrackVersion;
         CancellationToken token = cts.Token;
 
+        double maxSeconds = _settings.MusicMaxVideoMinutes * 60.0;
+
         Task.Run<(string? File, double Seconds)>(() =>
         {
-            VideoMatch? match = TrackResolver.Resolve(title, artist, duration, token);
+            VideoMatch? match = TrackResolver.Resolve(title, artist, duration, maxSeconds, token);
             if (match == null) return (null, 0);
+
+            // Before the download, not after it. The length is known from the
+            // search, and the fetch is the only expensive part of this — an
+            // hour of the song on loop is not the recording being played and
+            // was never going to be shown, so it should not be paid for.
+            //
+            // Caught here as well as in the search because a match cached by an
+            // earlier run, under a looser limit, comes straight back from the
+            // cache without being searched again.
+            if (maxSeconds > 0 && match.Seconds > maxSeconds)
+            {
+                Storage.Log($"music: skipped the video for \"{title}\" - it runs " +
+                            $"{match.Seconds / 60:0.#} min against a {maxSeconds / 60:0.#} min limit");
+                return (null, match.Seconds);
+            }
 
             token.ThrowIfCancellationRequested();
 
@@ -590,9 +607,13 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
 
         if (file == null)
         {
-            // Normal, not a failure: most tracks on a music service have no
-            // video. The card is already up and stays up.
-            Detail = "No video — showing the card";
+            // A length here means something was found and refused for being too
+            // long; nothing means the search simply came back empty. Neither is
+            // a failure — most tracks on a music service have no video — and
+            // the card is already up either way.
+            Detail = videoSeconds > 0
+                ? $"Video is {videoSeconds / 60:0.#} min, too long — showing the card"
+                : "No video — showing the card";
             return;
         }
 

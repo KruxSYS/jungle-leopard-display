@@ -227,6 +227,25 @@
                         <ColumnDefinition Width="110"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Longest video" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextDim}"/>
+                    <ComboBox Grid.Column="1" x:Name="MusicMaxLengthCombo"
+                              SelectionChanged="OnMusicCacheSettingChanged"
+                              ToolTip="Anything longer is not downloaded. A search for a song reliably turns up an hour of it on loop, and length is checked before the fetch rather than after it.">
+                        <ComboBoxItem><TextBlock Text="5 minutes" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="8 minutes" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="12 minutes" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="20 minutes" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="30 minutes" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="No limit" Foreground="#1A1207"/></ComboBoxItem>
+                    </ComboBox>
+                </Grid>
+
+                <Grid Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Keep videos" VerticalAlignment="Center"
                                Foreground="{StaticResource TextDim}"/>
                     <ComboBox Grid.Column="1" x:Name="MusicDaysCombo"

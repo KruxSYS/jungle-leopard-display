@@ -477,10 +477,14 @@ It also settles the quality question: the whole 720p rung comes down at whatever
 rate the link allows, rather than being decoded live from a throttled
 connection.
 
-Downloads are swept by age and by size — **Settings → Music** sets both, and
-**Sweep now** applies them immediately. The defaults keep a video for two weeks
-after it was last played, within 4 GB. Unfinished downloads left by skipping
-tracks are cleaned up too.
+**Settings → Music** caps how long a video may be before it is worth fetching
+at all — a search for a song reliably turns up an hour of it on loop, and that
+is checked against the search result, before the download rather than after it.
+The default is 12 minutes.
+
+Downloads are then swept by age and by size, and **Sweep now** applies both
+immediately. The defaults keep a video for two weeks after it was last played,
+within 4 GB. Unfinished downloads left by skipping tracks are cleaned up too.
 
 ### On sync
 

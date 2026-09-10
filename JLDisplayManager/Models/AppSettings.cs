@@ -244,6 +244,7 @@ public sealed class AppSettings : INotifyPropertyChanged
     private bool _musicVideo = true;
     private int _musicCacheMB = 4096;
     private int _musicCacheDays = 14;
+    private int _musicMaxVideoMinutes = 12;
 
     /// <summary>
     /// Publish <c>music.*</c> sensors from the Windows media session — whatever
@@ -289,6 +290,20 @@ public sealed class AppSettings : INotifyPropertyChanged
     {
         get => _musicVideo;
         set => Set(ref _musicVideo, value);
+    }
+
+    /// <summary>
+    /// The longest video worth downloading, in minutes. 0 accepts any length.
+    ///
+    /// A search for a song returns the track, a lyric video, and — reliably —
+    /// an hour of it on loop. Length is checked before the download rather than
+    /// after, because the download is the part that costs: a match this far off
+    /// is not the recording being played and was never going to be shown.
+    /// </summary>
+    public int MusicMaxVideoMinutes
+    {
+        get => _musicMaxVideoMinutes;
+        set => Set(ref _musicMaxVideoMinutes, Math.Clamp(value, 0, 600));
     }
 
     /// <summary>
