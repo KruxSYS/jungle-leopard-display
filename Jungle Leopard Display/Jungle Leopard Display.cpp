@@ -10,7 +10,7 @@
 //     jl_display.exe --image frame.jpg --once        # send one frame and exit
 //     jl_display.exe --video clip.mp4                # play a video
 //     jl_display.exe --video clip.gif --loop         # loop it forever
-//     jl_display.exe --video clip.gif --loop --preprocess disk
+//     jl_display.exe --video clip.gif --loop --preprocess disk --per-frame
 //                                                    # transcode once, then no ffmpeg
 //
 // Video calibration (picking a JPEG quality whose frames all fit the panel's
@@ -119,8 +119,23 @@ int main(int argc, char** argv)
         else if (a == "--rotate" && i + 1 < argc) opts.rotate = atoi(argv[++i]);
         else if (a == "--fps" && i + 1 < argc) opts.fps = atoi(argv[++i]);
         else if (a == "--quality" && i + 1 < argc) opts.quality = atoi(argv[++i]);
+        else if (a == "--per-frame") opts.perFrameQuality = true;
+        else if (a == "--ceiling" && i + 1 < argc) {
+            opts.perFrameQuality = true;
+            opts.qualityCeiling = atoi(argv[++i]);
+        }
+        else if (a == "--rate" && i + 1 < argc) {
+            opts.perFrameQuality = true;
+            opts.byteRate = (uint32_t)(atoi(argv[++i]) * 1024);   // KB/s on the command line
+        }
         else if (a == "--port" && i + 1 < argc) port = Widen(argv[++i]);
     }
+
+    // Streaming commits to one quality before it has seen the frames, so
+    // per-frame is a preprocessing feature and silently doing nothing would be
+    // worse than saying so.
+    if (opts.perFrameQuality && preprocess == jl::Preprocess::Off)
+        fprintf(stderr, "--per-frame needs --preprocess memory or disk; ignoring it\n");
 
     // Applied after the whole command line is read, so --limit works whichever
     // side of --preprocess it lands on.
@@ -147,6 +162,8 @@ int main(int argc, char** argv)
             "         --video FILE [--loop] [--fps N] [--quality 2-31]\n"
             "                      [--recalibrate] [--hwaccel auto|d3d11va|cuda|qsv]\n"
             "                      [--preprocess none|memory|disk] [--limit MB]\n"
+            "                      [--per-frame] [--ceiling 50-98]\n"
+            "                      [--rate KB/s, default 1150]\n"
             "         --clear-cache\n",
             argv[0]);
         return 1;

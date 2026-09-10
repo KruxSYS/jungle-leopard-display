@@ -62,7 +62,10 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>Setupapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- windowsapp.lib is the WinRT entry point: jl_media.cpp reads the Windows
+           media session through C++/WinRT, which is header-only and adds nothing
+           to the drop. -->
+      <AdditionalDependencies>Setupapi.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
@@ -90,6 +93,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="jl_api.cpp" />
+    <ClCompile Include="jl_media.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\JLDisplayCore\JLDisplayCore.vcxproj">

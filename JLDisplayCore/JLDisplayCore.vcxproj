@@ -78,6 +78,7 @@
     <ClCompile Include="jl_calibrate.cpp" />
     <ClCompile Include="jl_device.cpp" />
     <ClCompile Include="jl_ffmpeg.cpp" />
+    <ClCompile Include="jl_jpeg.cpp" />
     <ClCompile Include="jl_log.cpp" />
     <ClCompile Include="jl_overlay.cpp" />
     <ClCompile Include="jl_pack.cpp" />

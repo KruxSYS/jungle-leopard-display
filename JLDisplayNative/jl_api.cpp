@@ -28,7 +28,7 @@ namespace {
         Guard& operator=(const Guard&) = delete;
     };
 
-    enum class ItemKind { None, Image, Video };
+    enum class ItemKind { None, Image, Video, Stream };
 
     struct Session {
         jl::Device  device;
@@ -49,6 +49,21 @@ namespace {
         std::atomic<bool> abortItem{ false };
         std::atomic<bool> shuttingDown{ false };
 
+        // The ffmpeg the play loop is currently reading from, and a lock that
+        // makes terminating it safe.
+        //
+        // Stopping an item sets abortItem and waits for the worker — but the
+        // worker spends its time blocked in ReadFile on this child's pipe, and
+        // checks the flag only between frames. A source that has stopped
+        // producing frames therefore never notices, and the wait is as long as
+        // ffmpeg's own. Killing the child ends the read at once and the worker
+        // unwinds through its ordinary path.
+        //
+        // Held whenever the handle is read or replaced, so a terminate cannot
+        // land on a handle the worker is closing.
+        CRITICAL_SECTION child{};
+        HANDLE           childProcess = nullptr;
+
         // A pending seek in seconds, or negative for none. Written by whichever
         // thread the host calls from and taken by the playback loop at its next
         // frame; an unconsumed request is simply replaced, so dragging a
@@ -66,6 +81,13 @@ namespace {
         std::wstring   itemPath;
         jl::RenderOpts itemOpts;
         ItemKind       itemKind = ItemKind::None;
+
+        // Only for ItemKind::Stream. Not part of RenderOpts on purpose: a URL
+        // and the headers it needs are not rendering options, and RenderOpts is
+        // key material for the calibration and pack caches — putting a signed
+        // URL that changes every play into a cache key would make every entry a
+        // miss.
+        jl::StreamSource itemStream;
 
         // Guarded by `state`.
         //
@@ -98,6 +120,7 @@ namespace {
         {
             InitializeCriticalSection(&cmd);
             InitializeCriticalSection(&state);
+            InitializeCriticalSection(&child);
         }
     };
 
@@ -179,6 +202,13 @@ namespace {
     }
 
     // Consumes the pending seek, so one request moves playback exactly once.
+    // Called by the play loop as each ffmpeg starts and ends.
+    void OnChild(void* processHandle, void*)
+    {
+        Guard lock(g.child);
+        g.childProcess = (HANDLE)processHandle;
+    }
+
     double TakeSeek(void*)
     {
         return g.seekTo.exchange(-1.0);
@@ -311,21 +341,54 @@ namespace {
             return 0;
         }
 
+        if (kind == ItemKind::Stream) {
+            // Never packed and never calibrated: there is no file identity to
+            // key a pack on, and a survey would fetch the whole thing a second
+            // time. Streaming is the only mode a live source has.
+            SetState(JL_STATE_PLAYING);
+
+            jl::StreamSource stream = g.itemStream;
+
+            jl::PlaybackStats stats;
+            bool ok = jl::PlayVideo(g.device, path, opts, ShouldAbort, nullptr,
+                OnFrame, nullptr, &stats, TakeSeek, nullptr, OnPosition, nullptr,
+                &comp, &stream, OnChild, nullptr);
+
+            FinishPlayback(ok, stats);
+            return 0;
+        }
+
         if (kind == ItemKind::Video) {
             // Resolve the quality separately from playing it, so the two states
             // are distinguishable: calibration can take a minute on a long file
             // and the UI has to be able to say so. Doing it here rather than
             // inside each path also means the pack builder and the streamer
             // agree on the answer by construction.
-            SetState(JL_STATE_CALIBRATING);
+            //
+            // Returns false only when it failed or was cancelled; the state is
+            // already set by then.
+            auto calibrate = [&] {
+                if (opts.quality > 0) return true;
 
-            const int quality = jl::ResolveQuality(path, opts, ShouldAbort, nullptr);
-            if (quality == -2 || ShouldAbort(nullptr)) return 0;   // cancelled
-            if (quality < 0) {
-                SetState(JL_STATE_ERROR);
-                return 0;
-            }
-            opts.quality = quality;   // both paths now skip calibration entirely
+                SetState(JL_STATE_CALIBRATING);
+
+                const int quality = jl::ResolveQuality(path, opts, ShouldAbort, nullptr);
+                if (quality == -2 || ShouldAbort(nullptr)) return false;   // cancelled
+                if (quality < 0) {
+                    SetState(JL_STATE_ERROR);
+                    return false;
+                }
+                opts.quality = quality;   // whatever runs next skips calibration
+                return true;
+            };
+
+            // A per-frame pack needs no calibrated figure at all, and a survey
+            // costs a pass over the file — so it is deferred until something
+            // actually wants one, which now means only the streaming fallback.
+            const bool perFramePack = mode != jl::Preprocess::Off &&
+                opts.perFrameQuality && opts.quality <= 0;
+
+            if (!perFramePack && !calibrate()) return 0;
 
             // The pack has to outlive playback: PlayPack reads straight out of
             // it, and for a disk pack that means straight out of the mapping.
@@ -355,12 +418,17 @@ namespace {
                 // still works, so fall through to it rather than failing.
             }
 
+            // Streaming commits to one figure for the whole run, so this is
+            // where a per-frame item finally pays for a survey — and only if it
+            // got this far, which is the uncommon path.
+            if (!calibrate()) return 0;
+
             SetState(JL_STATE_PLAYING);
 
             jl::PlaybackStats stats;
             bool ok = jl::PlayVideo(g.device, path, opts, ShouldAbort, nullptr,
                 OnFrame, nullptr, &stats, TakeSeek, nullptr, OnPosition, nullptr,
-                &comp);
+                &comp, nullptr, OnChild, nullptr);
 
             FinishPlayback(ok, stats);
             return 0;
@@ -374,6 +442,20 @@ namespace {
     void StopWorkerLocked()
     {
         g.abortItem.store(true);
+
+        // Before the wait, not after: the whole point is to stop the worker
+        // blocking on a child that has nothing to say. Terminating one that was
+        // about to exit anyway costs nothing — the frames it had already sent
+        // are on the panel, and the loop treats a closed pipe as the end of a
+        // pass either way.
+        {
+            Guard lock(g.child);
+            if (g.childProcess) {
+                TerminateProcess(g.childProcess, 0);
+                g.childProcess = nullptr;
+            }
+        }
+
         if (g.worker) {
             WaitForSingleObject(g.worker, INFINITE);
             CloseHandle(g.worker);
@@ -382,7 +464,8 @@ namespace {
         g.abortItem.store(false);
     }
 
-    int32_t StartWorkerLocked(const wchar_t* path, const JlRenderOpts* opts, ItemKind kind)
+    int32_t StartWorkerLocked(const wchar_t* path, const JlRenderOpts* opts, ItemKind kind,
+        const jl::StreamSource* stream = nullptr)
     {
         if (!path || !*path || !opts) return JL_ERR_BAD_ARGS;
         if (!g.device.IsOpen()) return JL_ERR_NOT_OPEN;
@@ -394,6 +477,9 @@ namespace {
         o.quality = opts->quality;
         o.loop = opts->loop != 0;
         o.recalibrate = opts->recalibrate != 0;
+        o.perFrameQuality = opts->perFrameQuality != 0;
+        o.qualityCeiling = opts->qualityCeiling;
+        o.byteRate = opts->byteRate;
 
         wchar_t hw[32];
         CopyTo(hw, _countof(hw), opts->hwaccel);
@@ -418,6 +504,12 @@ namespace {
 
         StopWorkerLocked();
 
+        // The compositor answers to the same data rate the pack builder does.
+        // It has to be told: it sees frames, not options, and steering on the
+        // panel's frame cap instead let an overlay spend nearly half again what
+        // the setting allowed.
+        g.overlay.SetBudget(jl::FrameBudget(o.byteRate, o.fps));
+
         {
             Guard lock(g.state);
             g.error.clear();
@@ -436,6 +528,7 @@ namespace {
         g.itemPath = path;
         g.itemOpts = o;
         g.itemKind = kind;
+        g.itemStream = stream ? *stream : jl::StreamSource{};
 
         g.worker = CreateThread(nullptr, 0, WorkerProc, nullptr, 0, nullptr);
         if (!g.worker) {
@@ -540,6 +633,24 @@ int32_t jl_play_video(const wchar_t* path, const JlRenderOpts* opts)
     return StartWorkerLocked(path, opts, ItemKind::Video);
 }
 
+int32_t jl_play_stream(const wchar_t* url, const wchar_t* inputArgs,
+    double startSeconds, double durationSeconds, const JlRenderOpts* opts)
+{
+    Guard lock(g.cmd);
+
+    jl::StreamSource stream;
+    stream.inputArgs = inputArgs ? inputArgs : L"";
+    stream.startAt = startSeconds > 0 ? startSeconds : 0.0;
+    stream.duration = durationSeconds > 0 ? durationSeconds : 0.0;
+
+    // A stream has no calibrated figure, so it uses the one calibration lands
+    // on for nearly everything anyway — about 37 KB a frame, which at 30 fps is
+    // kDefaultByteRate. It therefore sends no more than the app always has.
+    stream.quality = 3;
+
+    return StartWorkerLocked(url, opts, ItemKind::Stream, &stream);
+}
+
 int32_t jl_calibrate(const wchar_t* path, const JlRenderOpts* opts)
 {
     if (!path || !*path || !opts) return JL_ERR_BAD_ARGS;
@@ -619,8 +730,11 @@ void jl_get_status(JlStatus* out)
     const jl::Overlay::Stats ov = g.overlay.Snapshot();
     out->overlayComposeMs = ov.composeMs;
     out->overlayEncodeMs = ov.encodeMs;
+    out->overlayOutBytes = ov.outBytes;
     out->overlayQuality = (int32_t)(ov.quality * 100.0f + 0.5f);
     out->overlayDrops = (int32_t)ov.drops;
+    out->overlayOverBudget = (int32_t)ov.overBudget;
+    out->overlayReserved = 0;
 }
 
 int32_t jl_get_last_frame(uint8_t* buf, int32_t cap)

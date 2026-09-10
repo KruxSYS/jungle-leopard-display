@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -24,6 +25,14 @@ public sealed class DisplayService : INotifyPropertyChanged, IDisposable
     private const int PollMs = 250;
     private const int ReconnectMs = 2000;
 
+    /// <summary>
+    /// How long after a wake to leave the device alone before the first
+    /// reconnect attempt. USB re-enumeration is not instant and an attempt made
+    /// before it finishes is certain to fail; the reconnect loop would retry
+    /// anyway, so this only saves a pointless first go.
+    /// </summary>
+    private const int ResumeSettleMs = 2000;
+
     private readonly AppSettings _settings;
     private readonly DispatcherTimer _poll;
 
@@ -31,6 +40,8 @@ public sealed class DisplayService : INotifyPropertyChanged, IDisposable
     private int _lastFinishedCount;
     private DateTime _nextReconnectAttempt = DateTime.MinValue;
     private bool _everConnected;
+    private volatile bool _suspended;
+    private DateTime _lastResume = DateTime.MinValue;
 
     private NativeMethods.JlState _state = NativeMethods.JlState.Disconnected;
     private bool _connected;
@@ -54,6 +65,8 @@ public sealed class DisplayService : INotifyPropertyChanged, IDisposable
             Interval = TimeSpan.FromMilliseconds(PollMs),
         };
         _poll.Tick += (_, _) => Poll();
+
+        RegisterPowerNotifications();
     }
 
     /// <summary>Raised when an item reached its own end — a video running out.</summary>
@@ -295,6 +308,78 @@ public sealed class DisplayService : INotifyPropertyChanged, IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Holds a still that is already in the panel's own format, bypassing the
+    /// library entirely — used by the music follower for the card's backdrop.
+    ///
+    /// Rotation is deliberately 0. A 960x480 JPEG under the cap is sent as-is
+    /// with no rotation asked for, which is what lets the card work on a machine
+    /// with no ffmpeg at all; and the only thing drawn here is a blur, which has
+    /// no orientation worth preserving. Everything legible on the card is the
+    /// overlay's, and the overlay rotates itself.
+    /// </summary>
+    public bool ShowStill(string path)
+    {
+        if (!Connected) return false;
+        if (!File.Exists(path)) return false;
+
+        var opts = new NativeMethods.JlRenderOpts
+        {
+            Stretch = 1,
+            Rotate = 0,
+            Fps = _settings.Fps,
+            Quality = 0,
+            Loop = 0,
+            Recalibrate = 0,
+            PerFrameQuality = _settings.PerFrameQuality ? 1 : 0,
+            QualityCeiling = _settings.QualityCeiling,
+            ByteRate = (uint)(_settings.ByteRateKBs * 1024),
+            Hwaccel = _settings.Hwaccel,
+        };
+
+        // Nothing in the library is showing, and saying so matters: the app's
+        // reconnect handler puts Current back, and doing that would fight the
+        // follower for the panel.
+        Current = null;
+
+        int rc = NativeMethods.jl_show_image(path, ref opts);
+        Poll();
+        return rc == NativeMethods.JL_OK;
+    }
+
+    /// <summary>
+    /// Streams a live URL onto the panel — the music follower's video path.
+    ///
+    /// Rotation and stretch come from the settings as they do for a video,
+    /// because unlike the card's backdrop this is a picture with a right way up.
+    /// </summary>
+    public bool PlayStream(string url, string inputArgs, double startSeconds, double duration)
+    {
+        if (!Connected) return false;
+        if (string.IsNullOrWhiteSpace(url)) return false;
+
+        var opts = new NativeMethods.JlRenderOpts
+        {
+            Stretch = _settings.Stretch ? 1 : 0,
+            Rotate = _settings.Rotate,
+            Fps = _settings.Fps,
+            Quality = 0,
+            Loop = 0,
+            Recalibrate = 0,
+            PerFrameQuality = 0,
+            QualityCeiling = _settings.QualityCeiling,
+            ByteRate = (uint)(_settings.ByteRateKBs * 1024),
+            Hwaccel = _settings.Hwaccel,
+        };
+
+        Current = null;
+
+        int rc = NativeMethods.jl_play_stream(url, inputArgs ?? "", startSeconds, duration,
+            ref opts);
+        Poll();
+        return rc == NativeMethods.JL_OK;
+    }
+
     public void Stop()
     {
         Current = null;
@@ -314,9 +399,12 @@ public sealed class DisplayService : INotifyPropertyChanged, IDisposable
             Stretch = (item.Stretch ?? _settings.Stretch) ? 1 : 0,
             Rotate = item.Rotate ?? _settings.Rotate,
             Fps = _settings.Fps,
-            Quality = 0,                       // always let the core calibrate
+            Quality = 0,                       // always let the core decide
             Loop = (item.Loop && !forceNoLoop) ? 1 : 0,
             Recalibrate = 0,
+            PerFrameQuality = _settings.PerFrameQuality ? 1 : 0,
+            QualityCeiling = _settings.QualityCeiling,
+            ByteRate = (uint)(_settings.ByteRateKBs * 1024),
             Hwaccel = _settings.Hwaccel,
         };
     }
@@ -375,8 +463,140 @@ public sealed class DisplayService : INotifyPropertyChanged, IDisposable
         if (!Connected) MaybeReconnect();
     }
 
+    // -----------------------------------------------------------------------
+    // Sleep and wake
+    //
+    // The panel is a USB device on the far side of a power transition, and what
+    // goes wrong there is specifically the thing the reconnect loop cannot see.
+    //
+    // That loop only runs when Connected goes false, and Connected only goes
+    // false when a write fails. After a wake there are two ways for no write to
+    // ever fail. If nothing was playing there are no writes at all, so nothing
+    // notices the handle is stale. And if something was playing, the panel may
+    // come back with its COM port still present and the handle still valid,
+    // having reset itself while the host slept: the writes keep succeeding, the
+    // host reports a clean connection at 30 fps, and the picture never moves.
+    // That second one is the same blindness that makes the data rate impossible
+    // to measure from here — the panel accepts everything and says nothing.
+    //
+    // So this does not try to detect anything. It closes the port on the way
+    // down and again on the way up, which forces the next open to redo
+    // Device::Clear(), live mode and brightness, and lets the ordinary
+    // reconnect loop do the retrying it is already good at.
+    // -----------------------------------------------------------------------
+
+    // PowerRegisterSuspendResumeNotification rather than
+    // SystemEvents.PowerModeChanged, because .NET does not map
+    // PBT_APMRESUMEAUTOMATIC onto PowerModes.Resume. Windows sends that one for
+    // every wake; PBT_APMRESUMESUSPEND only follows when a person woke the
+    // machine. Listening to SystemEvents alone would fix the case where someone
+    // presses a key and miss the machine waking itself for maintenance — which
+    // looks identical when you come back to it hours later.
+    private const int PBT_APMSUSPEND = 0x0004;
+    private const int PBT_APMRESUMESUSPEND = 0x0007;
+    private const int PBT_APMRESUMEAUTOMATIC = 0x0012;
+    private const int DEVICE_NOTIFY_CALLBACK = 2;
+
+    private delegate int DeviceNotifyCallback(IntPtr context, int type, IntPtr setting);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DeviceNotifySubscribeParameters
+    {
+        public IntPtr Callback;
+        public IntPtr Context;
+    }
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerRegisterSuspendResumeNotification(
+        int flags, ref DeviceNotifySubscribeParameters parameters, out IntPtr handle);
+
+    [DllImport("powrprof.dll")]
+    private static extern uint PowerUnregisterSuspendResumeNotification(IntPtr handle);
+
+    // Held for the life of the registration: the OS keeps the raw pointer, and
+    // a collected delegate is a crash the moment the machine sleeps.
+    private DeviceNotifyCallback? _powerCallback;
+    private IntPtr _powerNotify;
+
+    private void RegisterPowerNotifications()
+    {
+        _powerCallback = OnPowerEvent;
+
+        var p = new DeviceNotifySubscribeParameters
+        {
+            Callback = Marshal.GetFunctionPointerForDelegate(_powerCallback),
+            Context = IntPtr.Zero,
+        };
+
+        if (PowerRegisterSuspendResumeNotification(
+                DEVICE_NOTIFY_CALLBACK, ref p, out _powerNotify) != 0)
+        {
+            _powerNotify = IntPtr.Zero;
+            _powerCallback = null;
+            Storage.Log("could not subscribe to sleep and wake notifications");
+        }
+    }
+
+    private int OnPowerEvent(IntPtr context, int type, IntPtr setting)
+    {
+        switch (type)
+        {
+            case PBT_APMSUSPEND:
+                // Done inline rather than through the dispatcher: the native
+                // session takes its own lock, and Windows gives a suspend
+                // handler only a couple of seconds — enough to close the port,
+                // not enough to also wait for the UI thread to be free.
+                _suspended = true;
+                NativeMethods.jl_close();
+                Storage.Log("suspending: released the panel");
+                _poll.Dispatcher.BeginInvoke(Poll);
+                break;
+
+            case PBT_APMRESUMESUSPEND:
+            case PBT_APMRESUMEAUTOMATIC:
+                // Both usually arrive for a single wake. WakeUp is idempotent,
+                // but a second pass would still restart the settle timer and
+                // log again, so collapse them on time rather than on having
+                // seen a suspend — a resume without one has to still work.
+                DateTime now = DateTime.UtcNow;
+                if (now - _lastResume < TimeSpan.FromSeconds(5)) break;
+                _lastResume = now;
+
+                _suspended = false;
+                _poll.Dispatcher.BeginInvoke(WakeUp);
+                break;
+        }
+
+        return 0;   // ERROR_SUCCESS
+    }
+
+    /// <summary>
+    /// Puts the connection back after a wake. Closes first even though the
+    /// suspend handler usually did: hibernate and fast startup do not reliably
+    /// deliver Suspend, and reopening is the only way to be sure the panel gets
+    /// its initialisation sequence again.
+    /// </summary>
+    private void WakeUp()
+    {
+        _suspended = false;
+
+        NativeMethods.jl_close();
+        _nextReconnectAttempt = DateTime.UtcNow.AddMilliseconds(ResumeSettleMs);
+
+        Storage.Log(_settings.AutoReconnect
+            ? "resumed: reconnecting to the panel"
+            : "resumed: not reconnecting, the device is released");
+
+        Poll();
+    }
+
     private void MaybeReconnect()
     {
+        // Between the suspend handler and the machine actually going down the
+        // poll timer can still tick, and reopening the port there would undo
+        // the close moments before sleep.
+        if (_suspended) return;
+
         if (!_settings.AutoReconnect) return;
         if (DateTime.UtcNow < _nextReconnectAttempt) return;
 
@@ -432,6 +652,14 @@ public sealed class DisplayService : INotifyPropertyChanged, IDisposable
 
     public void Dispose()
     {
+        // The OS holds a raw pointer to the callback until this returns, so
+        // unregistering has to happen before the delegate can be collected.
+        if (_powerNotify != IntPtr.Zero) {
+            PowerUnregisterSuspendResumeNotification(_powerNotify);
+            _powerNotify = IntPtr.Zero;
+        }
+        _powerCallback = null;
+
         _poll.Stop();
         NativeMethods.jl_close();
     }

@@ -50,6 +50,24 @@ public static class NativeMethods
         public int Loop;
         public int Recalibrate;
 
+        /// <summary>
+        /// Preprocessing only: encode every frame at the best quality it can
+        /// afford rather than at the one figure the busiest frame in the file
+        /// allows. Bigger packs, better picture.
+        /// </summary>
+        public int PerFrameQuality;
+
+        /// <summary>0 = the default 84, else 50..98 percent.</summary>
+        public int QualityCeiling;
+
+        /// <summary>
+        /// What the link and the panel behind it can swallow, in bytes per
+        /// second. Divided by the frame rate this is what one frame may spend,
+        /// and it is the setting that decides whether playback stutters.
+        /// 0 = the default.
+        /// </summary>
+        public uint ByteRate;
+
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
         public string Hwaccel;
     }
@@ -88,14 +106,33 @@ public static class NativeMethods
         public double OverlayEncodeMs;
 
         /// <summary>
-        /// The working JPEG quality × 100, 30–92. Falls when the panel's size
-        /// cap forces it down, which is the only visible symptom of an overlay
-        /// too expensive to encode — worth surfacing rather than hiding.
+        /// Rolling mean of the composed frame, in bytes. Times the frame rate,
+        /// this is the data rate actually reaching the panel — the only way to
+        /// see the compositor overspending, because the panel accepts every
+        /// byte and falls behind silently rather than reporting a drop.
+        /// </summary>
+        public double OverlayOutBytes;
+
+        /// <summary>
+        /// The working JPEG quality × 100, 5–92. Falls when the rate budget
+        /// forces it down, which is the visible symptom of an overlay too
+        /// expensive to encode — worth surfacing rather than hiding.
         /// </summary>
         public int OverlayQuality;
 
         /// <summary>Frames that would not fit under the cap at any quality.</summary>
         public int OverlayDrops;
+
+        /// <summary>
+        /// Frames sent above the per-frame rate budget. These are not drops —
+        /// they went out, because a gap costs more than one expensive frame —
+        /// but a number that climbs steadily means the rate is set too low for
+        /// the content, or the overlay too heavy for the rate.
+        /// </summary>
+        public int OverlayOverBudget;
+
+        /// <summary>Padding; mirrors overlayReserved in jl_api.h.</summary>
+        public int OverlayReserved;
     }
 
     [DllImport(Dll, CharSet = CharSet.Unicode)]
@@ -118,6 +155,20 @@ public static class NativeMethods
 
     [DllImport(Dll, CharSet = CharSet.Unicode)]
     public static extern int jl_play_video(string path, ref JlRenderOpts opts);
+
+    /// <summary>
+    /// Plays a live URL. Never packed and never calibrated — a stream has no
+    /// file identity to key a pack on, and a survey pass would fetch the whole
+    /// thing a second time.
+    ///
+    /// <paramref name="inputArgs"/> goes to ffmpeg verbatim before -i, which is
+    /// how a signed URL gets the user agent it was issued to. It is a separate
+    /// argument rather than a field on <see cref="JlRenderOpts"/> because that
+    /// struct is key material for the caches.
+    /// </summary>
+    [DllImport(Dll, CharSet = CharSet.Unicode)]
+    public static extern int jl_play_stream(string url, string inputArgs,
+        double startSeconds, double durationSeconds, ref JlRenderOpts opts);
 
     [DllImport(Dll, CharSet = CharSet.Unicode)]
     public static extern int jl_calibrate(string path, ref JlRenderOpts opts);
@@ -179,6 +230,90 @@ public static class NativeMethods
     [DllImport(Dll)]
     public static extern void jl_overlay_clear();
 
+    /// <summary>
+    /// Mirrors JlMediaStatus: what some other program on this machine is
+    /// playing, read from the Windows media session. Nothing here plays audio —
+    /// the panel cannot — it exists so the manager can follow along.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct JlMediaStatus
+    {
+        /// <summary>The native reader thread is up.</summary>
+        public int Running;
+
+        /// <summary>The session manager was obtained. False on a machine too old for it.</summary>
+        public int Available;
+
+        /// <summary>A session is being followed.</summary>
+        public int Present;
+
+        public int Playing;
+
+        /// <summary>
+        /// Where the track is now, in seconds — extrapolated natively from the
+        /// last timeline report, because players refresh that every few seconds
+        /// rather than every frame.
+        /// </summary>
+        public double Position;
+
+        /// <summary>Track length, or 0 when the player does not say.</summary>
+        public double Duration;
+
+        /// <summary>
+        /// Bumps on any change of title, artist or album. Watched rather than
+        /// diffed, so the same track played twice still reads as a new track.
+        /// </summary>
+        public int TrackVersion;
+
+        public int ThumbnailVersion;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+        public string Title;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+        public string Artist;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+        public string Album;
+
+        /// <summary>
+        /// The source app id. Often opaque rather than an executable name —
+        /// Firefox reports "308046B0AF4A39CB" — so it is an identity to match
+        /// on, not a label to show.
+        /// </summary>
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string SourceApp;
+    }
+
+    /// <summary>
+    /// Starts the media-session reader, or repoints a running one.
+    /// <paramref name="preferredApp"/> is a source app id, or null to follow
+    /// whichever session is playing.
+    /// </summary>
+    [DllImport(Dll, CharSet = CharSet.Unicode)]
+    public static extern int jl_media_start(string? preferredApp);
+
+    [DllImport(Dll)]
+    public static extern void jl_media_stop();
+
+    [DllImport(Dll)]
+    public static extern void jl_media_get(out JlMediaStatus status);
+
+    /// <summary>
+    /// Every registered session's app id, NUL-separated with a trailing NUL.
+    /// Returns the characters needed; pass null to ask for the size.
+    /// </summary>
+    [DllImport(Dll, CharSet = CharSet.Unicode)]
+    public static extern int jl_media_sessions([Out] char[]? buf, int cch);
+
+    /// <summary>
+    /// The current track's album art as the player supplied it — PNG or JPEG.
+    /// Returns the byte count, the size needed when <paramref name="cap"/> is
+    /// too small, or 0 when there is none.
+    /// </summary>
+    [DllImport(Dll)]
+    public static extern int jl_media_thumbnail(byte[]? buf, int cap);
+
     [DllImport(Dll, CharSet = CharSet.Unicode)]
     public static extern int jl_ffmpeg_path(StringBuilder buf, int cch);
 
@@ -190,14 +325,19 @@ public static class NativeMethods
     {
         int opts = Marshal.SizeOf<JlRenderOpts>();
         int status = Marshal.SizeOf<JlStatus>();
+        int media = Marshal.SizeOf<JlMediaStatus>();
 
-        // 1128 originally; 1144 once JlStatus gained the two playback position
-        // doubles; 1168 now it carries the four overlay diagnostics.
-        if (opts != 88 || status != 1168)
+        // JlStatus: 1128 originally; 1144 once it gained the two playback
+        // position doubles; 1168 with the four overlay diagnostics; 1184 now
+        // those carry the composed frame size and the over-budget count too.
+        // JlRenderOpts: 88 before per-frame quality; 96 before its byte rate.
+        // JlMediaStatus: 1832 as introduced.
+        if (opts != 100 || status != 1184 || media != 1832)
         {
             throw new InvalidOperationException(
                 $"JLDisplayNative.dll interop layout mismatch: " +
-                $"JlRenderOpts={opts} (expected 88), JlStatus={status} (expected 1168). " +
+                $"JlRenderOpts={opts} (expected 100), JlStatus={status} (expected 1184), " +
+                $"JlMediaStatus={media} (expected 1832). " +
                 "Interop/NativeMethods.cs and jl_api.h have drifted apart.");
         }
     }

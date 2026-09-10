@@ -68,9 +68,11 @@ public partial class MainWindow : Window
         _app.Pipeline.ItemGenerated += OnItemGenerated;
         _app.Pipeline.ItemPruned += OnItemPruned;
         _app.Pipeline.PropertyChanged += OnPipelineChanged;
+        _app.Music.PropertyChanged += (_, _) => Dispatcher.Invoke(UpdateMusicStatus);
 
         UpdateStatus();
         UpdateAiStatus();
+        UpdateMusicStatus();
         UpdateEmptyHints();
         UpdateSourceTabs();
         UpdatePlaylistHeading();
@@ -164,6 +166,47 @@ public partial class MainWindow : Window
         PanelPromptText.Visibility = string.IsNullOrEmpty(prompt)
             ? Visibility.Collapsed
             : Visibility.Visible;
+    }
+
+    /// <summary>
+    /// The now-playing strip: what the browser is playing, and what the follower
+    /// did about it. Hidden entirely unless following, so it costs nothing to
+    /// anybody not using the feature.
+    /// </summary>
+    private void UpdateMusicStatus()
+    {
+        var music = _app.Music;
+
+        FollowMusicButton.Content = music.Running ? "Stop following" : "Follow music";
+
+        if (!music.Running)
+        {
+            MusicPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        MusicPanel.Visibility = Visibility.Visible;
+        MusicSummary.Text = music.Summary;
+        MusicDetail.Text = music.Detail;
+        MusicDetail.Visibility = string.IsNullOrEmpty(music.Detail)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    private void OnToggleFollowMusic(object sender, RoutedEventArgs e)
+    {
+        if (_app.Music.Running)
+        {
+            _app.StopMusic();
+            _app.Display.Stop();
+        }
+        else
+        {
+            _app.StartMusic();
+        }
+
+        UpdateMusicStatus();
+        _app.SaveAll();
     }
 
     private void OnToggleAi(object sender, RoutedEventArgs e)

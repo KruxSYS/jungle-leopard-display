@@ -184,7 +184,7 @@ public static class OverlayRenderer
         switch (layer)
         {
             case ShapeLayer s: DrawShape(dc, s, bounds, ctx.Theme); break;
-            case ImageLayer i: DrawImage(dc, i, bounds, ctx); break;
+            case ImageLayer i: DrawImage(dc, i, bounds, values, ctx); break;
             case BarLayer b: DrawBar(dc, b, bounds, values, ctx.Theme); break;
             case GaugeLayer g: DrawGauge(dc, g, bounds, values, ctx.Theme); break;
             case TextLayer t: DrawText(dc, t, bounds, values, ctx.Theme); break;
@@ -422,9 +422,16 @@ public static class OverlayRenderer
         dc.DrawLine(pen, new Point(cx - half * 0.35, cy + half * 0.7), tip);
     }
 
-    private static void DrawImage(DrawingContext dc, ImageLayer layer, Rect r, LayerContext ctx)
+    private static void DrawImage(DrawingContext dc, ImageLayer layer, Rect r,
+                                 SensorSnapshot values, LayerContext ctx)
     {
-        BitmapSource? bmp = LoadImage(layer.File, ctx.AssetDirectory);
+        // The file is a template, like a text layer's. Nearly always it is a
+        // plain name and TokenFormatter hands it straight back — but it is what
+        // lets a layer show a picture chosen by a sensor rather than by the
+        // profile, which is how album art reaches the panel: the path changes
+        // per track, so the cache below sees a new key and the skip signature
+        // sees a change.
+        BitmapSource? bmp = LoadImage(TokenFormatter.Format(layer.File, values), ctx.AssetDirectory);
         if (bmp == null) return;
 
         if (!layer.PreserveAspect) { dc.DrawImage(bmp, r); return; }

@@ -113,6 +113,29 @@
                               SelectionChanged="OnBudgetChanged"/>
                 </Grid>
 
+                <CheckBox x:Name="PerFrameBox" Margin="0,8,0,2"
+                          Content="Give every frame the best quality it fits"
+                          Click="OnPerFrameChanged"
+                          ToolTip="Off, a video is encoded at the one setting its busiest frame allows, and every simpler frame is worse than it needed to be. On, each frame is encoded at its own. Preprocessed frames only."/>
+
+                <Grid x:Name="ByteRateRow" Margin="0,4,0,4" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Data rate" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextDim}"/>
+                    <ComboBox x:Name="ByteRateBox" Grid.Column="1"
+                              SelectionChanged="OnByteRateChanged"
+                              ToolTip="How much the panel is asked to decode per second. The link carries far more than this; what runs out is the panel's own decoding, and it gives no sign when it falls behind. Raise it only while watching the panel.">
+                        <ComboBoxItem><TextBlock Text="0.7 MB/s — for dense footage that still stutters" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="0.9 MB/s — softer, but steady" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1.1 MB/s — what the panel has always been sent" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1.4 MB/s — sharper; watch for stutter" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1.9 MB/s — only if it keeps up" Foreground="#1A1207"/></ComboBoxItem>
+                    </ComboBox>
+                </Grid>
+
                 <TextBlock x:Name="PreprocessHint" Margin="0,0,0,8" FontSize="11"
                            TextWrapping="Wrap" Foreground="{StaticResource TextDim}"/>
 
@@ -166,6 +189,87 @@
 
                 <TextBlock x:Name="SensorStatusText" TextWrapping="Wrap" FontSize="11"
                            Margin="0,2,0,14"/>
+
+                <TextBlock Text="MUSIC" Style="{StaticResource Heading}"/>
+
+                <TextBlock Margin="0,0,0,8" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{StaticResource TextDim}"
+                           Text="Follows whatever is playing elsewhere on this machine — a browser tab, a music player — and puts it on the panel. Nothing here plays audio or controls playback; the player you already use stays the remote control."/>
+
+                <CheckBox x:Name="MediaSessionBox" Content="Read what's playing"
+                          Checked="OnMusicChanged" Unchecked="OnMusicChanged"/>
+                <TextBlock Margin="24,0,0,8" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{StaticResource TextDim}"
+                           Text="Publishes the track as music.* sensors, so any overlay can show the title, artist, album art or progress. Takes effect on the next restart."/>
+
+                <CheckBox x:Name="MusicVideoBox" Content="Stream the music video"
+                          Checked="OnMusicChanged" Unchecked="OnMusicChanged"/>
+                <TextBlock Margin="24,0,0,8" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{StaticResource TextDim}"
+                           Text="Searches YouTube for the track and streams the video live, matching on length so a lyric video or an hour-long loop is not mistaken for the song. Tracks with no video show the card instead. Off means the card, always, and no searching."/>
+
+                <Grid Margin="0,4,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Follow" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextDim}"/>
+                    <ComboBox Grid.Column="1" x:Name="MediaAppCombo"
+                              SelectionChanged="OnMediaAppChanged"/>
+                </Grid>
+                <TextBlock Margin="24,0,0,14" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{StaticResource TextDim}"
+                           Text="Which player to follow when more than one is running. Automatic prefers whichever is actually playing."/>
+
+                <Grid Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Keep videos" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextDim}"/>
+                    <ComboBox Grid.Column="1" x:Name="MusicDaysCombo"
+                              SelectionChanged="OnMusicCacheSettingChanged"
+                              ToolTip="How long a downloaded video is kept after it was last played. Listening moves on, so this is what stops the cache filling with music you no longer play.">
+                        <ComboBoxItem><TextBlock Text="3 days" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1 week" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="2 weeks" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1 month" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="3 months" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="Until the limit below is reached" Foreground="#1A1207"/></ComboBoxItem>
+                    </ComboBox>
+                </Grid>
+
+                <Grid Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Cache limit" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextDim}"/>
+                    <ComboBox Grid.Column="1" x:Name="MusicCacheCombo"
+                              SelectionChanged="OnMusicCacheSettingChanged"
+                              ToolTip="Reaching this drops the least recently played videos rather than refusing to fetch new ones. A 720p music video is usually 10-30 MB.">
+                        <ComboBoxItem><TextBlock Text="512 MB" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1 GB" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="2 GB" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="4 GB" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="8 GB" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="16 GB" Foreground="#1A1207"/></ComboBoxItem>
+                    </ComboBox>
+                </Grid>
+
+                <StackPanel Orientation="Horizontal" Margin="0,2,0,14">
+                    <TextBlock x:Name="MusicCacheText" VerticalAlignment="Center"
+                               FontSize="11" Foreground="{StaticResource TextDim}"/>
+                    <Button Content="Clear" Style="{StaticResource Btn}"
+                            Margin="10,0,0,0" Click="OnClearMusicCache"
+                            ToolTip="Delete every downloaded music video. They are fetched again the next time each track plays."/>
+                    <Button Content="Sweep now" Style="{StaticResource Btn}"
+                            Margin="8,0,0,0" Click="OnSweepMusicCache"
+                            ToolTip="Apply the two limits above straight away, rather than waiting for the hourly sweep."/>
+                </StackPanel>
 
                 <TextBlock Text="DEVICE" Style="{StaticResource Heading}"/>
 

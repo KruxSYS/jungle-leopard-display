@@ -66,6 +66,19 @@ extern "C" {
         int32_t quality;       // 0 = calibrate automatically, else 2..31
         int32_t loop;
         int32_t recalibrate;   // ignore any cached calibration
+
+        // Preprocessing only: give every frame the best quality it can afford
+        // instead of encoding the whole file at the one figure its busiest
+        // frame allows. Bigger packs, better picture. Ignored when `quality`
+        // names a -q:v.
+        int32_t perFrameQuality;
+        int32_t qualityCeiling;   // 0 = default (84), else 50..98 percent
+
+        // What the link and the panel behind it can swallow, in bytes per
+        // second. Divided by fps this is what one frame may spend, and it is
+        // the setting that decides whether playback stutters. 0 = default.
+        uint32_t byteRate;
+
         wchar_t hwaccel[32];   // "" software, "auto" resolve, or an explicit method
     } JlRenderOpts;
 
@@ -102,8 +115,18 @@ extern "C" {
         // costing a call of their own.
         double  overlayComposeMs;   // rolling mean: decode + blend
         double  overlayEncodeMs;    // rolling mean
-        int32_t overlayQuality;     // working JPEG quality x100, 30..92
+
+        // Rolling mean of the composed frame, in bytes. Multiply by the frame
+        // rate for the data rate actually reaching the panel — the one number
+        // that makes an overspending compositor visible, since the panel itself
+        // reports a clean 30 fps and no drops while falling behind.
+        double  overlayOutBytes;
+
+        int32_t overlayQuality;     // working JPEG quality x100, 5..92
         int32_t overlayDrops;       // frames that would not fit under the cap
+        int32_t overlayOverBudget;  // frames sent above the rate budget
+        int32_t overlayReserved;    // pads to an 8-byte multiple; keeps the
+                                    // struct's size stable for the next int32
     } JlStatus;
 
     // -----------------------------------------------------------------------
@@ -138,6 +161,31 @@ extern "C" {
     // Calibrates if needed, then streams. finishedCount advances when the source
     // ends, unless opts->loop is set.
     JLAPI int32_t jl_play_video(const wchar_t* path, const JlRenderOpts* opts);
+
+    // Plays a live network source — an http(s) URL ffmpeg can open.
+    //
+    // Deliberately not jl_play_video with a URL in it. A stream is never packed
+    // and never calibrated: there is no file identity to key a pack on, and a
+    // survey pass would fetch the whole thing a second time to decide a quality
+    // it would be finished needing by the time it arrived. It uses the figure
+    // calibration lands on for nearly all content anyway, so it sends no more
+    // than a file does.
+    //
+    // `inputArgs` is passed to ffmpeg verbatim before -i — "-user_agent ..." and
+    // "-headers ...", which a signed media URL usually needs. It is a separate
+    // argument rather than a field on JlRenderOpts because RenderOpts is key
+    // material for the caches, and a URL that changes every play would poison
+    // them.
+    //
+    // `startSeconds` joins a source already in progress; `durationSeconds` is
+    // how long it runs, which the caller knows and ffprobe would cost a request
+    // to ask. Both may be 0.
+    //
+    // opts->loop is ignored: a signed URL expires, so looping one is not a thing
+    // that works. finishedCount advances when the source ends.
+    JLAPI int32_t jl_play_stream(const wchar_t* url, const wchar_t* inputArgs,
+        double startSeconds, double durationSeconds,
+        const JlRenderOpts* opts);
 
     // Surveys a video and caches the result without touching the device, so
     // pressing play later is instant. Needs no open session.
@@ -222,6 +270,67 @@ extern "C" {
     // Drops the surface, leaving nothing drawn. Cheaper than pushing a fully
     // transparent one, and unlike jl_overlay_set_enabled it forgets the pixels.
     JLAPI void jl_overlay_clear(void);
+
+    // -----------------------------------------------------------------------
+    // Media session
+    //
+    // What is playing elsewhere on the machine — a browser tab, a music player
+    // — read from the Windows media session (SMTC). The panel has no audio and
+    // this plays nothing; it exists so the host can follow along with somebody
+    // else's playback.
+    //
+    // A dedicated thread does the reading, because the calls behind this are
+    // cross-process into the player and must not run on a UI thread. These
+    // functions only copy out what it last saw.
+    // -----------------------------------------------------------------------
+
+    typedef struct JlMediaStatus {
+        int32_t running;           // the reader is up
+        int32_t available;         // the session manager was obtained at all
+        int32_t present;           // a session is being followed
+        int32_t playing;           // 0 paused or stopped, 1 playing
+
+        // Seconds. `position` is extrapolated from the last timeline report,
+        // because players refresh that every few seconds rather than every
+        // frame — read it as "where the track is now", not "what was reported".
+        // `duration` is 0 when the player does not say.
+        double  position;
+        double  duration;
+
+        // Bumps when the title, artist or album changes, and when the art does.
+        // Watching a counter rather than diffing strings means a track that
+        // repeats is still seen as a new track.
+        int32_t trackVersion;
+        int32_t thumbnailVersion;
+
+        wchar_t title[256];
+        wchar_t artist[256];
+        wchar_t album[256];
+        wchar_t sourceApp[128];    // "chrome.exe", "msedge.exe", …
+    } JlMediaStatus;
+
+    // Starts the reader, or repoints an already-running one. `preferredApp` is
+    // a source app id to follow, or NULL/empty to choose automatically — which
+    // prefers a session that is actually playing, and otherwise stays with
+    // whatever it was already following rather than flapping between players.
+    JLAPI int32_t jl_media_start(const wchar_t* preferredApp);
+
+    // Stops the reader and forgets everything it saw. Waits for the thread,
+    // which may be inside a call into the player.
+    JLAPI void jl_media_stop(void);
+
+    JLAPI void jl_media_get(JlMediaStatus* out);
+
+    // Every session currently registered, as app ids: NUL between entries and
+    // an extra NUL at the end, like any Windows multi-string. Returns the
+    // characters needed, so pass buf=NULL to ask for the size.
+    JLAPI int32_t jl_media_sessions(wchar_t* buf, int32_t cch);
+
+    // The current track's album art, exactly as the player supplied it — PNG or
+    // JPEG, whatever it chose. Returns the byte count, or the size needed when
+    // `cap` is too small, or 0 when there is none. Same shape as
+    // jl_get_last_frame.
+    JLAPI int32_t jl_media_thumbnail(uint8_t* buf, int32_t cap);
 
     // -----------------------------------------------------------------------
 

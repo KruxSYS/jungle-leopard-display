@@ -117,6 +117,12 @@ public sealed class OverlayService : IDisposable
 
         Sensors.Add(new PdhProvider());
         Sensors.Add(new SystemProvider());
+
+        // Last, and claiming ids nothing else describes: what some other
+        // program on this machine is playing. Reading it costs a thread that
+        // polls a property, so it stays on unless the user turns it off.
+        if (_settings.UseMediaSession)
+            Sensors.Add(new MediaSessionProvider(_settings.MediaSessionApp));
         Sensors.Start(overlays.SensorPollMs);
 
         NativeMethods.jl_overlay_set_enabled(_enabled ? 1 : 0);
@@ -323,6 +329,14 @@ public sealed class OverlayService : IDisposable
                     Append(sb, values, g.Source);
                     sb.Append(TokenFormatter.Format(g.CentreTemplate, values));
                     sb.Append(TokenFormatter.Format(g.Caption, values));
+                    break;
+
+                case ImageLayer im:
+                    // The one layer whose picture is a file rather than a
+                    // value. Album art changes by being pointed at a different
+                    // file, and without this the skip signature would never
+                    // notice — the track would change and the art would not.
+                    sb.Append(TokenFormatter.Format(im.File, values));
                     break;
 
                 case GraphLayer gr:

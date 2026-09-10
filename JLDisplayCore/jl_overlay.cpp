@@ -5,13 +5,11 @@
 // of the video costs a decode, a blend and a re-encode of every frame, and this
 // is where that happens.
 //
-// WIC does the codec work. It is in-box, it is fast enough (measured ~0.9 ms
-// each way at 960x480), and — the reason it was chosen over GDI+ — its JPEG
-// encoder lets the chroma subsampling be pinned. The panel decodes 4:2:0 only
-// and renders anything else as a smeared picture rather than reporting an
-// error, which is exactly how GIF playback stayed broken for so long. So
-// JpegYCrCbSubsampling is set explicitly on every frame and never left to the
-// encoder's discretion.
+// WIC does the codec work; the encoder half lives in jl_jpeg.cpp, shared with
+// the pack builder, and pins the chroma subsampling the panel insists on. What
+// stays here is the decode, the blend, and the rate control — the last of which
+// is this file's alone: a compositor cannot know what the next frame costs, so
+// it steers quality from what the last ones did.
 
 #include "jl_internal.h"
 
@@ -29,22 +27,42 @@ namespace jl {
 
         // Quality here is WIC's 0..1 ImageQuality, which is unrelated to
         // ffmpeg's -q:v. Measured against this panel's content: 0.85 is about
-        // -q:v 3, 0.55 about -q:v 7. Starting at 0.75 leaves the worst realistic
-        // case — a high-detail source under the heaviest overlay — at roughly
-        // 85% of the cap, which is the headroom the rate control needs to have
-        // somewhere to go.
+        // -q:v 3, 0.55 about -q:v 7.
         constexpr float kStartQuality = 0.75f;
-        constexpr float kMinQuality = 0.30f;
         constexpr float kMaxQuality = 0.92f;
-        constexpr float kQualityStep = 0.07f;
         constexpr float kQualityRecover = 0.02f;
 
-        // Frames comfortably under the cap before quality is nudged back up.
-        // Deliberately slow: a busy scene must not make this oscillate.
-        constexpr int    kRecoverAfter = 90;
-        constexpr size_t kRecoverBelow = (size_t)(0.62 * kMaxJpegBytes);
+        // How far quality falls for one over-budget frame, scaled by how far
+        // over it was. A flat step cannot serve both ends: 0.07 was picked when
+        // the limit was the 80 KB cap and was almost never reached, so its only
+        // job was to escape an emergency. The budget binds all the time, and a
+        // flat 0.07 against it dived to 0.14 and spent a busy stretch at 61% of
+        // the rate it was allowed — measured, not supposed. Proportional keeps
+        // the lunge for the frame that is twice over and gives the frame that
+        // is barely over a nudge.
+        constexpr float kMinStep = 0.015f;
+        constexpr float kMaxStep = 0.10f;
+
+        // 0.30 reads like a floor and is not one: a dense 960x480 frame still
+        // encodes to 73 KB there. The pack builder's ladder was extended down
+        // for exactly this reason and this floor moves with it, or a busy scene
+        // under an overlay has nowhere to go and parks over budget.
+        constexpr float kMinQuality = 0.05f;
+
+        // Frames comfortably under the budget before quality is nudged back up.
+        // Slow enough that a busy scene cannot make this oscillate, but 90 was
+        // far too slow once the budget started binding: recovering the 0.33 a
+        // single hard scene cost took the better part of two minutes, so the
+        // picture stayed soft long after the content stopped being hard.
+        constexpr int   kRecoverAfter = 20;
+        constexpr float kRecoverFraction = 0.85f;
 
         constexpr int kMaxEncodeAttempts = 4;
+
+        // Until a playback worker says otherwise. Matches what FrameBudget gives
+        // for the default rate at 30 fps, so an overlay composed before any
+        // opts arrive is not briefly allowed to spend the whole 80 KB.
+        constexpr size_t kFallbackBudget = kDefaultByteRate / 30;
 
         template <class T> void SafeRelease(T*& p) { if (p) { p->Release(); p = nullptr; } }
 
@@ -72,12 +90,6 @@ namespace jl {
         {
             mean = mean == 0.0 ? sample : mean * 0.95 + sample * 0.05;
         }
-
-        // Per-thread WIC state. The factory is created on the thread that
-        // composites and released when it unbinds, so nothing outlives the COM
-        // apartment it was made in.
-        thread_local IWICImagingFactory* t_factory = nullptr;
-        thread_local bool t_ownsCom = false;
 
     }  // namespace
 
@@ -111,6 +123,11 @@ namespace jl {
         // frame discovering that again; one is enough to notice it recovering.
         bool atFloor = false;
 
+        // What one composed frame may spend, from the configured data rate.
+        // Atomic because the host sets it when an item starts, off whatever
+        // thread called in, while a playback worker is reading it per frame.
+        std::atomic<size_t> budget{ kFallbackBudget };
+
         Stats stats{};
 
         Impl()
@@ -127,19 +144,22 @@ namespace jl {
         // channel because video frames are opaque by construction.
         bool Decode(const std::vector<uint8_t>& jpeg)
         {
+            IWICImagingFactory* factory = detail::WicFactory();
+            if (!factory) return false;
+
             IWICStream* stream = nullptr;
             IWICBitmapDecoder* decoder = nullptr;
             IWICBitmapFrameDecode* frame = nullptr;
             IWICFormatConverter* conv = nullptr;
             bool ok = false;
 
-            if (SUCCEEDED(t_factory->CreateStream(&stream)) &&
+            if (SUCCEEDED(factory->CreateStream(&stream)) &&
                 SUCCEEDED(stream->InitializeFromMemory(
                     const_cast<BYTE*>(jpeg.data()), (DWORD)jpeg.size())) &&
-                SUCCEEDED(t_factory->CreateDecoderFromStream(
+                SUCCEEDED(factory->CreateDecoderFromStream(
                     stream, nullptr, WICDecodeMetadataCacheOnDemand, &decoder)) &&
                 SUCCEEDED(decoder->GetFrame(0, &frame)) &&
-                SUCCEEDED(t_factory->CreateFormatConverter(&conv)) &&
+                SUCCEEDED(factory->CreateFormatConverter(&conv)) &&
                 SUCCEEDED(conv->Initialize(frame, GUID_WICPixelFormat24bppBGR,
                     WICBitmapDitherTypeNone, nullptr, 0.0,
                     WICBitmapPaletteTypeCustom)))
@@ -188,85 +208,38 @@ namespace jl {
 
         bool EncodeOnce(float q, std::vector<uint8_t>& out)
         {
-            IStream* mem = nullptr;
-            IWICStream* stream = nullptr;
-            IWICBitmapEncoder* encoder = nullptr;
-            IWICBitmapFrameEncode* frame = nullptr;
-            IPropertyBag2* bag = nullptr;
-            bool ok = false;
-
-            if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &mem))) return false;
-
-            if (SUCCEEDED(t_factory->CreateStream(&stream)) &&
-                SUCCEEDED(stream->InitializeFromIStream(mem)) &&
-                SUCCEEDED(t_factory->CreateEncoder(GUID_ContainerFormatJpeg, nullptr, &encoder)) &&
-                SUCCEEDED(encoder->Initialize(stream, WICBitmapEncoderNoCache)) &&
-                SUCCEEDED(encoder->CreateNewFrame(&frame, &bag)))
-            {
-                PROPBAG2 opt[2] = {};
-                VARIANT  val[2] = {};
-
-                opt[0].pstrName = const_cast<LPOLESTR>(L"ImageQuality");
-                val[0].vt = VT_R4;
-                val[0].fltVal = q;
-
-                // Not optional. See the file header.
-                opt[1].pstrName = const_cast<LPOLESTR>(L"JpegYCrCbSubsampling");
-                val[1].vt = VT_UI1;
-                val[1].bVal = WICJpegYCrCbSubsampling420;
-
-                bag->Write(2, opt, val);
-
-                WICPixelFormatGUID fmt = GUID_WICPixelFormat24bppBGR;
-                if (SUCCEEDED(frame->Initialize(bag)) &&
-                    SUCCEEDED(frame->SetSize(kPanelWidth, kPanelHeight)) &&
-                    SUCCEEDED(frame->SetPixelFormat(&fmt)) &&
-                    SUCCEEDED(frame->WritePixels(kPanelHeight, kStride,
-                        (UINT)pixels.size(), pixels.data())) &&
-                    SUCCEEDED(frame->Commit()) &&
-                    SUCCEEDED(encoder->Commit()))
-                {
-                    HGLOBAL hg = nullptr;
-                    STATSTG st{};
-                    if (SUCCEEDED(GetHGlobalFromStream(mem, &hg)) &&
-                        SUCCEEDED(mem->Stat(&st, STATFLAG_NONAME)))
-                    {
-                        const size_t n = (size_t)st.cbSize.QuadPart;
-                        if (void* p = GlobalLock(hg)) {
-                            out.resize(n);
-                            memcpy(out.data(), p, n);
-                            GlobalUnlock(hg);
-                            ok = true;
-                        }
-                    }
-                }
-            }
-
-            SafeRelease(bag);
-            SafeRelease(frame);
-            SafeRelease(encoder);
-            SafeRelease(stream);
-            SafeRelease(mem);
-            return ok;
+            return detail::EncodeJpeg(pixels.data(), q, out);
         }
 
         // Rate control. The calibrated -q:v governs what ffmpeg hands us; it
-        // says nothing about what this encoder produces, so the cap has to be
+        // says nothing about what this encoder produces, so the limit has to be
         // enforced here.
+        //
+        // The limit that matters is the DATA RATE, not the 80 KB frame cap.
+        // Steering on the cap is what this did originally and it was wrong in a
+        // way nothing reported: the target worked out to 49.5 KB a frame, which
+        // at 30 fps is 1.45 MB/s, and on easy content the recovery rule walked
+        // quality up to 0.91 and parked it there. Measured against real frames,
+        // a busy stretch went out at 1667 KB/s against a configured 1150 —
+        // p90 pinned at the cap — and the panel stuttered while the host
+        // reported a clean 30 fps and zero drops. The overlay costs about 2 ms
+        // of CPU a frame; it was never the time, it was always the bytes.
         bool Encode(std::vector<uint8_t>& out)
         {
-            const int attempts = atFloor ? 1 : kMaxEncodeAttempts;
+            const size_t target = (std::min)(budget.load(), kMaxJpegBytes);
+            const size_t recover = (size_t)(target * kRecoverFraction);
+            const int    attempts = atFloor ? 1 : kMaxEncodeAttempts;
 
             for (int i = 0; i < attempts; ++i) {
                 if (!EncodeOnce(quality, out)) return false;
 
-                if (out.size() <= kMaxJpegBytes) {
+                if (out.size() <= target) {
                     if (i > 0) ++stats.reencodes;
                     atFloor = false;
 
                     // Creep back up only after a long clean run, so recovering
                     // from one busy scene cannot start an oscillation.
-                    if (out.size() < kRecoverBelow) {
+                    if (out.size() < recover) {
                         if (++goodRun >= kRecoverAfter) {
                             goodRun = 0;
                             quality = (std::min)(kMaxQuality, quality + kQualityRecover);
@@ -275,17 +248,33 @@ namespace jl {
                     else {
                         goodRun = 0;
                     }
+                    Roll(stats.outBytes, (double)out.size());
                     return true;
                 }
 
                 goodRun = 0;
                 if (quality <= kMinQuality) break;
-                quality = (std::max)(kMinQuality, quality - kQualityStep);
+
+                // out.size() > target here, so the ratio is above 1. Twice over
+                // takes the whole step; a few percent over takes almost none.
+                const double over = (double)out.size() / (double)target - 1.0;
+                const float  step = (std::clamp)((float)over * kMaxStep,
+                    kMinStep, kMaxStep);
+                quality = (std::max)(kMinQuality, quality - step);
             }
 
-            // Nothing fits even at the floor. Stop paying for four encodes a
-            // frame to keep rediscovering that.
+            // Over the rate budget with nothing left to give. Stop paying for
+            // four encodes a frame to keep rediscovering that; one is enough to
+            // notice it recovering.
             atFloor = true;
+            ++stats.overBudget;
+
+            // Being over the budget is not a reason to drop the frame — the
+            // budget is a rate, and a gap costs more than an expensive frame.
+            // Only the panel's hard cap decides what cannot be sent at all.
+            Roll(stats.outBytes, (double)out.size());
+            if (out.size() <= kMaxJpegBytes) return true;
+
             ++stats.drops;
             return false;
         }
@@ -299,30 +288,22 @@ namespace jl {
 
     bool Overlay::BindThread()
     {
-        if (t_factory) return true;
+        if (detail::WicBindThread()) return true;
 
-        // A worker that has already joined an apartment keeps it; only the ones
-        // that have not get one here, and only those undo it.
-        const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        t_ownsCom = SUCCEEDED(hr) && hr != S_FALSE;
-        if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) return false;
-
-        if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&t_factory))))
-        {
-            if (t_ownsCom) { CoUninitialize(); t_ownsCom = false; }
-            t_factory = nullptr;
-            Log(LogLevel::Warn, L"could not start the image compositor; "
-                L"the overlay will not be drawn");
-            return false;
-        }
-        return true;
+        Log(LogLevel::Warn, L"could not start the image compositor; "
+            L"the overlay will not be drawn");
+        return false;
     }
 
     void Overlay::UnbindThread()
     {
-        SafeRelease(t_factory);
-        if (t_ownsCom) { CoUninitialize(); t_ownsCom = false; }
+        detail::WicUnbindThread();
+    }
+
+    void Overlay::SetBudget(size_t bytesPerFrame)
+    {
+        if (bytesPerFrame == 0) bytesPerFrame = kFallbackBudget;
+        p_->budget.store((std::min)(bytesPerFrame, kMaxJpegBytes));
     }
 
     void Overlay::SetEnabled(bool on)
@@ -396,7 +377,7 @@ namespace jl {
         // The path taken whenever nobody is drawing anything. It must stay free.
         if (!Enabled()) return true;
 
-        if (!t_factory && !BindThread()) return true;   // degrade to no overlay
+        if (!detail::WicFactory() && !BindThread()) return true;   // degrade to no overlay
 
         const double t0 = NowMs();
         if (!p_->Decode(jpeg)) {

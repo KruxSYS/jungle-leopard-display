@@ -6,6 +6,20 @@
 // bytes and the render options. The calibration cache already relies on that;
 // this file takes it the rest of the way and stores the frames themselves.
 //
+// Once the frames are being stored rather than streamed, the one thing
+// calibration exists to work around stops applying. Calibration picks a single
+// -q:v for a whole file from its BUSIEST frame, because a stream has to commit
+// to a figure before it knows what is coming; a pack does not. So the builder
+// can encode each frame at the best quality that frame can afford and store
+// exactly that, which is what perFrameQuality asks for. Two consequences worth
+// knowing before touching either path:
+//
+//   - the search must stay a pure function of the frame's pixels, or two
+//     identical frames encode differently and the dedupe below stops seeing
+//     them as the same frame;
+//   - packs get bigger, because the whole point is that frames which were
+//     being squeezed for the sake of the worst one no longer are.
+//
 // A pack is deliberately dull:
 //
 //     header | frame blobs | index
@@ -26,7 +40,14 @@ namespace jl {
 
     namespace {
 
-        constexpr uint32_t kPackVersion = 1;
+        // 2 marks per-frame quality: the header's `quality` became a sentinel
+        // rather than the figure every frame was encoded at.
+        // 3: the quality ladder gained five steps below 0.30, so a frame that
+        // used to be shipped over budget because nothing fit now encodes lower
+        // and fits. The key does not change — the ceiling and the budget are
+        // the same numbers — but the frames behind it are different, so the
+        // version is what retires a pack built before the floor moved.
+        constexpr uint32_t kPackVersion = 3;
 
         // Set from the host, read by whichever worker is building. Atomic rather
         // than locked: a change lands on the next pack, and a build already
@@ -47,10 +68,11 @@ namespace jl {
             uint32_t fps;
             uint32_t width;
             uint32_t height;
-            uint32_t quality;         // the -q:v every frame was encoded at
+            uint32_t quality;         // the -q:v every frame was encoded at, or
+                                      // 0 when each frame chose its own
             uint32_t frameCount;      // entries in the index
             uint32_t uniqueCount;     // distinct blobs actually stored
-            uint32_t reserved;
+            uint32_t reserved;        // per-frame packs: the quality ceiling
             uint64_t sourceSize;
             uint64_t sourceMtime;
             uint64_t indexOffset;
@@ -91,10 +113,11 @@ namespace jl {
 
         // Everything that changes the bytes we would send: which file, what it
         // contained, how it is framed, how fast, and at what quality. The same
-        // material as the calibration key, plus the two things calibration does
-        // not care about — the frame rate, and the quality it settled on.
+        // material as the calibration key, plus the things calibration does not
+        // care about — the frame rate, and either the -q:v it settled on or the
+        // ceiling a per-frame build was given.
         std::string PackKey(const std::wstring& input, const std::wstring& filter,
-            int fps, int quality)
+            int fps, int quality, int ceiling, size_t budget)
         {
             std::wstring full = input;
             wchar_t abs[MAX_PATH] = L"";
@@ -113,9 +136,10 @@ namespace jl {
             material += "|";
             for (wchar_t c : filter) material += (char)(c & 0xFF);
 
-            char extra[128];
-            sprintf_s(extra, sizeof(extra), "|%llu|%llu|%d|%d|%d|%d|pack%u",
-                bytes, mtime, fps, quality, kPanelWidth, kPanelHeight, kPackVersion);
+            char extra[160];
+            sprintf_s(extra, sizeof(extra), "|%llu|%llu|%d|%d|%d|%zu|%d|%d|pack%u",
+                bytes, mtime, fps, quality, ceiling, budget,
+                kPanelWidth, kPanelHeight, kPackVersion);
             material += extra;
 
             return detail::Fnv1aHex(material);
@@ -296,7 +320,60 @@ namespace jl {
             size_t dropped = 0;
             bool   overBudget = false;
             bool   cancelled = false;
+
+            // Per-frame builds only. Worth reporting: a run whose lowest
+            // quality is the ceiling means the ceiling, not the size limit, is
+            // what every frame ran into, and raising it would change something.
+            size_t encodes = 0;
+            int    qualityMin = 100;
+            int    qualityMax = 0;
+            double qualitySum = 0.0;
+            size_t qualityCount = 0;
+
+            int MeanQuality() const
+            {
+                return qualityCount ? (int)(qualitySum / qualityCount + 0.5) : 0;
+            }
         };
+
+        // Snaps a requested ceiling to what the ladder can actually deliver, so
+        // the key and the header record the ceiling that was used rather than
+        // the one asked for — two requests landing on the same step then share
+        // one pack instead of building it twice.
+        int ClampCeiling(int percent)
+        {
+            if (percent <= 0) percent = kDefaultQualityCeiling;
+            if (percent < kMinQualityCeiling) percent = kMinQualityCeiling;
+            if (percent > kMaxQualityCeiling) percent = kMaxQualityCeiling;
+            return detail::QualityStepPercent(detail::QualityStepForPercent(percent));
+        }
+
+        // The tail both builders share: recognise a repeat, respect the budget,
+        // write, index. `stop` comes back true when the budget ended the build;
+        // false is a failed write, which is fatal to the pack.
+        bool StoreFrame(const std::vector<uint8_t>& frame, Sink& sink, size_t budget,
+            DedupeWindow& window, BuildResult& result, bool& stop)
+        {
+            const uint64_t hash = HashFrame(frame);
+            if (const FramePack::Ref* seen = window.Find(hash, frame)) {
+                result.index.push_back(*seen);
+                return true;
+            }
+
+            if (budget && sink.offset + frame.size() > budget) {
+                result.overBudget = true;
+                stop = true;
+                return true;
+            }
+
+            FramePack::Ref ref{ sink.offset, (uint32_t)frame.size() };
+            if (!sink.Write(frame.data(), frame.size())) return false;
+
+            window.Add(hash, ref, frame);
+            result.index.push_back(ref);
+            ++result.unique;
+            return true;
+        }
 
         // Runs ffmpeg once, flat out, and feeds every frame into `sink`. This is
         // the calibration survey's loop with the encode kept instead of thrown
@@ -333,21 +410,12 @@ namespace jl {
                             L"the panel will draw them wrong");
                 }
 
-                const uint64_t hash = HashFrame(frame);
-                if (const FramePack::Ref* seen = window.Find(hash, frame)) {
-                    result.index.push_back(*seen);
+                bool stop = false;
+                if (!StoreFrame(frame, sink, budget, window, result, stop)) {
+                    wroteFailed = true;
+                    break;
                 }
-                else {
-                    if (budget && sink.offset + frame.size() > budget) {
-                        result.overBudget = true;
-                        break;
-                    }
-                    FramePack::Ref ref{ sink.offset, (uint32_t)frame.size() };
-                    if (!sink.Write(frame.data(), frame.size())) { wroteFailed = true; break; }
-                    window.Add(hash, ref, frame);
-                    result.index.push_back(ref);
-                    ++result.unique;
-                }
+                if (stop) break;
 
                 DWORD now = GetTickCount();
                 if (now - lastPrint >= 250) {
@@ -356,6 +424,90 @@ namespace jl {
                         result.index.size(),
                         (unsigned long long)(sink.offset / (1024 * 1024)),
                         (now - began) / 1000.0);
+                }
+            }
+
+            pipe.Close();
+            return !wroteFailed;
+        }
+
+        // Frames come out of ffmpeg raw and every encode is ours, which is the
+        // whole point: a quality chosen per frame is not something an ffmpeg
+        // command line can express. One decode pass, same as above — and no
+        // calibration pass before it, since there is no single figure to find.
+        bool RunBuildPerFrame(const std::wstring& ffmpeg, const std::wstring& input,
+            const std::wstring& filter, const std::wstring& hwaccel,
+            int fps, int ceiling, size_t frameBudget, Sink& sink, size_t budget,
+            AbortFn abort, void* abortUser, BuildResult& result)
+        {
+            // Counted, so binding here inside a host thread that already bound
+            // for its overlay does not take the factory away from it on exit.
+            if (!detail::WicBindThread()) {
+                Log(LogLevel::Error, L"could not start the JPEG encoder");
+                return false;
+            }
+            struct Unbind { ~Unbind() { detail::WicUnbindThread(); } } unbind;
+
+            const int ceilingStep = detail::QualityStepForPercent(ceiling);
+
+            detail::FfmpegPipe pipe;
+            const std::wstring cl =
+                detail::RawVideoCommand(ffmpeg, input, filter, hwaccel, fps);
+            if (!detail::StartFfmpegPipe(cl, pipe)) return false;
+
+            const size_t rawBytes = (size_t)kPanelWidth * kPanelHeight * 3;
+
+            DedupeWindow window;
+            std::vector<uint8_t> raw(rawBytes), frame;
+            const DWORD began = GetTickCount();
+            DWORD lastPrint = 0;
+            bool  formatChecked = false;
+            bool  wroteFailed = false;
+            bool  stop = false;
+
+            while (!stop && detail::ReadRawFrame(pipe, raw.data(), rawBytes)) {
+                if (abort && abort(abortUser)) { result.cancelled = true; break; }
+
+                int step = 0, encodes = 0;
+                const bool fits = detail::EncodeJpegToFit(raw.data(), ceilingStep,
+                    frameBudget, kMaxJpegBytes, frame, step, encodes);
+                result.encodes += encodes;
+
+                // Either the encoder failed or this frame will not fit at any
+                // quality the ladder offers. A frame the panel would refuse must
+                // not go into a pack that outlives this run and replays it
+                // forever, and one bad frame is no reason to abandon the rest.
+                if (!fits) { ++result.dropped; continue; }
+
+                const int percent = detail::QualityStepPercent(step);
+                if (percent < result.qualityMin) result.qualityMin = percent;
+                if (percent > result.qualityMax) result.qualityMax = percent;
+                result.qualitySum += percent;
+                ++result.qualityCount;
+
+                // The encoder pins 4:2:0, so this cannot fail — but it could
+                // only ever fail silently, and the panel's failure mode for the
+                // wrong flavour is a smeared picture rather than an error.
+                if (!formatChecked) {
+                    formatChecked = true;
+                    if (!detail::JpegIsBaseline420(frame))
+                        Log(LogLevel::Warn, L"frames are not baseline 4:2:0 - "
+                            L"the panel will draw them wrong");
+                }
+
+                if (!StoreFrame(frame, sink, budget, window, result, stop)) {
+                    wroteFailed = true;
+                    break;
+                }
+
+                DWORD now = GetTickCount();
+                if (now - lastPrint >= 250) {
+                    lastPrint = now;
+                    Log(LogLevel::Progress,
+                        L"  preprocessing: %zu frames, %llu MB, quality %d%%, %.1fs",
+                        result.index.size(),
+                        (unsigned long long)(sink.offset / (1024 * 1024)),
+                        result.MeanQuality(), (now - began) / 1000.0);
                 }
             }
 
@@ -558,13 +710,25 @@ namespace jl {
         const std::wstring filter = detail::BuildFilter(resolved.stretch, resolved.rotate);
 
         // The quality is part of what the frames ARE, so it has to be settled
-        // before the key can name them. On anything but the very first run this
-        // is a lookup in the calibration table, not a survey.
-        const int quality = ResolveQuality(path, resolved, abort, abortUser);
-        if (quality < 0) return false;
+        // before the key can name them — which for a per-frame build means the
+        // ceiling and nothing else. That skips calibration entirely: a survey
+        // is a second pass over the file to find a figure this path does not
+        // use. An explicit -q:v turns per-frame off, because a caller naming a
+        // figure is asking for that figure everywhere.
+        const bool   perFrame = resolved.perFrameQuality && resolved.quality <= 0;
+        const int    ceiling = perFrame ? ClampCeiling(resolved.qualityCeiling) : 0;
+        const size_t frameBudget = perFrame
+            ? FrameBudget(resolved.byteRate, resolved.fps) : 0;
+
+        int quality = 0;
+        if (!perFrame) {
+            quality = ResolveQuality(path, resolved, abort, abortUser);
+            if (quality < 0) return false;
+        }
         if (aborted()) return false;
 
-        const std::string  key = PackKey(path, filter, resolved.fps, quality);
+        const std::string  key = PackKey(path, filter, resolved.fps, quality, ceiling,
+            frameBudget);
         const std::wstring packPath = PackPath(key);
 
         if (stats) *stats = PackStats{};
@@ -583,9 +747,23 @@ namespace jl {
         }
 
         const DWORD began = GetTickCount();
-        Log(LogLevel::Info, L"preprocessing at -q:v %d...", quality);
+        if (perFrame)
+            Log(LogLevel::Info,
+                L"preprocessing, best quality per frame (%zu KB a frame, ceiling %d%%)...",
+                frameBudget / 1024, ceiling);
+        else
+            Log(LogLevel::Info, L"preprocessing at -q:v %d...", quality);
 
         BuildResult result;
+
+        // Which builder, decided once so the two sinks below cannot disagree.
+        auto build = [&](Sink& sink, size_t budget) {
+            return perFrame
+                ? RunBuildPerFrame(ffmpeg, path, filter, resolved.hwaccel, resolved.fps,
+                    ceiling, frameBudget, sink, budget, abort, abortUser, result)
+                : RunBuild(ffmpeg, path, filter, resolved.hwaccel, resolved.fps, quality,
+                    sink, budget, abort, abortUser, result);
+        };
 
         if (mode == Preprocess::Memory) {
             std::vector<uint8_t> blob;
@@ -594,10 +772,7 @@ namespace jl {
 
             const uint64_t budget = MemoryBudget();
 
-            if (!RunBuild(ffmpeg, path, filter, resolved.hwaccel, resolved.fps, quality,
-                sink, (size_t)budget, abort, abortUser, result)) {
-                return false;
-            }
+            if (!build(sink, (size_t)budget)) return false;
             if (result.cancelled || aborted()) return false;
 
             if (result.overBudget) {
@@ -646,7 +821,8 @@ namespace jl {
             head.fps = (uint32_t)resolved.fps;
             head.width = kPanelWidth;
             head.height = kPanelHeight;
-            head.quality = (uint32_t)quality;
+            head.quality = (uint32_t)quality;   // 0 marks a per-frame pack
+            head.reserved = (uint32_t)ceiling;
             memcpy(head.key, key.data(), 16);
 
             WIN32_FILE_ATTRIBUTE_DATA fad{};
@@ -663,8 +839,7 @@ namespace jl {
             sink.file = f;
             sink.offset = sizeof(head);
 
-            bool built = RunBuild(ffmpeg, path, filter, resolved.hwaccel, resolved.fps,
-                quality, sink, 0, abort, abortUser, result);
+            bool built = build(sink, 0);
 
             bool good = built && !result.cancelled && !aborted() && !result.index.empty();
 
@@ -715,10 +890,20 @@ namespace jl {
             }
         }
 
-        Log(LogLevel::Info,
-            L"preprocessed: %zu frames (%zu distinct), %zu MB, %.1fs - ffmpeg is done",
-            pack.FrameCount(), result.unique, pack.Bytes() / (1024 * 1024),
-            (GetTickCount() - began) / 1000.0);
+        if (perFrame)
+            Log(LogLevel::Info,
+                L"preprocessed: %zu frames (%zu distinct), %zu MB, quality %d%% "
+                L"(%d-%d), %.0f KB a frame, %.1f encodes/frame, %.1fs - ffmpeg is done",
+                pack.FrameCount(), result.unique, pack.Bytes() / (1024 * 1024),
+                result.MeanQuality(), result.qualityMin, result.qualityMax,
+                pack.FrameCount() ? (double)pack.Bytes() / pack.FrameCount() / 1024.0 : 0.0,
+                result.qualityCount ? (double)result.encodes / result.qualityCount : 0.0,
+                (GetTickCount() - began) / 1000.0);
+        else
+            Log(LogLevel::Info,
+                L"preprocessed: %zu frames (%zu distinct), %zu MB, %.1fs - ffmpeg is done",
+                pack.FrameCount(), result.unique, pack.Bytes() / (1024 * 1024),
+                (GetTickCount() - began) / 1000.0);
 
         if (result.dropped)
             Log(LogLevel::Warn, L"%zu frames were over the panel's limit and left out",
@@ -817,7 +1002,7 @@ namespace jl {
                 if (!pace.KeepAliveIfDue(device, now)) { ok = false; running = false; break; }
 
                 if ((sent % 30) == 0) {
-                    double secs = (now - pace.startedAt) / 1000.0;
+                    double secs = now / 1000.0;
                     Log(LogLevel::Progress, L"%zu frames, %.1f fps (preprocessed)",
                         sent, secs > 0 ? sent / secs : 0.0);
                 }
@@ -826,7 +1011,7 @@ namespace jl {
             if (!opts.loop || aborted()) running = false;
         }
 
-        const double elapsed = (GetTickCount() - pace.startedAt) / 1000.0;
+        const double elapsed = pace.ElapsedMs() / 1000.0;
 
         Log(LogLevel::Info, L"%zu frames sent over %zu pass(es), no ffmpeg", sent, passes);
 

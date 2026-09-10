@@ -7,7 +7,8 @@ Ships two programs over one shared core:
 
 - **Display Manager** — a tray app that holds the panel permanently, with a
   media library, a playlist, system-statistic overlays drawn over whatever is
-  playing, an optional AI image pipeline, a live preview of what's on the glass,
+  playing, a mode that follows whatever music is playing elsewhere on the
+  machine, an optional AI image pipeline, a live preview of what's on the glass,
   and an optional start-at-logon task.
 - **`Jungle Leopard Display.exe`** — the original command-line tool, for
   scripting and one-shot use.
@@ -136,11 +137,54 @@ memory-**mapped** rather than read, so a long video costs address space rather
 than working set, and the cache evicts least-recently-used once it passes its
 limit.
 
-Two things worth knowing:
+### Quality per frame
+
+Calibration has to pick one `-q:v` for a whole file, set by its **busiest**
+frame, because a stream commits to a figure before it knows what is coming. A
+pack does not: nothing about the panel requires two frames to have been encoded
+the same way. So with **Give every frame the best quality it fits** on — the
+default — the builder encodes each frame at the best quality that still fits
+under 64 KB, and stores exactly that.
+
+What one frame may spend is **the data rate divided by the frame rate**, not the
+80 KB a single frame is allowed. That distinction is the whole of it: 80 KB is a
+per-frame maximum, and the panel cannot decode 30 of those a second. Not a link
+limit — writes measure 3 MB/s flat out — but the panel's own decoding, which
+takes longer for a bigger JPEG and gives no sign at all when it falls behind.
+Calibration never had to know, because `-q:v` stops at 3 and that lands near
+37 KB a frame here — about 1.1 MB/s, whatever the target said. Budget by rate
+instead and the same 1.1 MB/s buys a markedly better picture, because those
+bytes go where they are needed.
+
+Measured on a 30 s clip that calibrated to `-q:v 3`, against the source frames:
+
+| | pack | mean / peak frame | SSIM |
+|---|---|---|---|
+| one `-q:v` for the file | 32.3 MB | 36.8 / 51.8 KB | 0.911 – 0.954 |
+| per frame, 1.1 MB/s | 30.9 MB | 35.2 / 38.3 KB | 0.965 – 0.986 |
+| per frame, 1.4 MB/s | 42.7 MB | 48.5 / 63.9 KB | 0.982 – 0.991 |
+
+The default is the middle of the five offered: better on every frame measured,
+in slightly **fewer** bytes than the uniform pack and with a third off the peak
+frame. The 1.4 MB/s row is sharper again and is offered, but it is past what
+this panel decodes in time — it stutters. Since nothing detects that but your
+own eyes, raise it only while watching the panel.
+
+There are two rates **below** the default as well, because 1.1 MB/s is a default
+and not a floor. It was measured on one panel against one kind of content, and
+what exhausts a panel's decoder is density — foliage, gravel, rain, anything
+without a flat region to compress. If a particular video still hitches at the
+default, the next thing to try is 0.9 MB/s, not a different setting.
+
+Two more consequences: frames are encoded by **WIC** rather than ffmpeg, and a
+per-frame build skips calibration entirely — one pass over the file instead of
+two.
+
+Two more things worth knowing:
 
 - **The frame rate is part of what a frame is.** It is baked into the pack's key
-  along with rotation, stretch and the calibrated quality, so changing any of
-  them rebuilds every pack. That is correct rather than wasteful — the old frames
+  along with rotation, stretch and either the calibrated quality or the
+  per-frame cap, so changing any of them rebuilds every pack. That is correct rather than wasteful — the old frames
   really are the wrong frames — but it is why the frame-rate slider feels
   expensive in Disk mode.
 - **Stills benefit too, in every mode but Off.** A still in a playlist used to be
@@ -253,8 +297,18 @@ sentence and let a model build.
 
 The panel has no overlay plane and no alpha, so there is nothing to composite
 *onto*. Every frame is decoded, blended and re-encoded on the way past. That
-costs about 3 ms and it is why the overlay is a feature of the player rather
+costs about 2 ms and it is why the overlay is a feature of the player rather
 than something bolted alongside it.
+
+The re-encode answers to the **same data rate** the pack builder does. That is
+worth saying because it did not always: the compositor used to steer on the
+80 KB per-frame cap instead, which works out to well over twice the default
+rate, and an overlay could quietly push a stream from 1.1 MB/s to 1.7 MB/s.
+Nothing reported it — the panel accepts every byte and falls behind in silence
+— so it showed up only as a picture that hitched with the overlay on and not
+without it. If you turn the overlay on and the picture softens slightly, that
+is this working: the rate is fixed, so the overlay's bytes have to come from
+somewhere.
 
 ### Layers
 
@@ -345,6 +399,90 @@ and a pill is around a kilobyte.
 
 ---
 
+## Following what's playing
+
+Turn on **Follow what's playing** from the tray and the panel starts mirroring
+whatever else on the machine is playing music — a YouTube Music tab, a browser,
+a desktop player. It reads the Windows media session, the same thing that feeds
+the volume-key popup.
+
+It plays nothing and controls nothing. Your player stays the remote control;
+this only watches and draws.
+
+Two things can end up on the glass:
+
+- **The music video**, streamed live, when one can be found.
+- **A now-playing card** when one cannot — the album art blurred across the
+  panel with the title, artist and progress over it. Most tracks on a music
+  service have no video, so this is the common case rather than a consolation
+  prize.
+
+The card is an ordinary overlay profile called **Now playing**, so it appears in
+the tray menu and can be rearranged, restyled or re-themed in the overlay editor
+like any other. The backdrop it draws on is a 960×480 JPEG the app builds
+itself, small enough to skip ffmpeg entirely — so the card works even on a
+machine that has none.
+
+Following is remembered between runs: a display left mirroring music is still
+mirroring music after a reboot.
+
+### The track becomes sensors
+
+Whether or not the panel is following, the current track is published as
+overlay tokens, so any profile can use it:
+
+`{music.title}` `{music.artist}` `{music.album}` `{music.source}`
+`{music.state}` `{music.elapsed}` `{music.length}` `{music.remaining}`
+and, as numbers for bars and visibility rules, `music.position`,
+`music.duration`, `music.progress`, `music.playing` and `music.idle`.
+
+`{music.art}` is the current cover's path on disk, which an **image** layer can
+be pointed at — that is how the card shows album art, and it works in any
+profile you build yourself.
+
+### Finding the video
+
+The media session reports a title, an artist and usually a length. It never
+reports a URL, so the video has to be searched for with `yt-dlp`, and the length
+is what keeps that honest: a search for a popular song returns the track, a
+lyric video, three live cuts and an hour-long loop, and only one of them runs for
+the same number of seconds. Where the player reports no length — YouTube Music
+in a browser often does not — it falls back to matching the title and preferring
+the artist's own upload.
+
+What it picked is shown beside the preview in the main window. That line is the
+answer to "why is it showing *that*".
+
+Results are cached in `music-cache.json` by track, so a song played twice
+searches once. The media URL itself is never cached — those are signed and
+expire within hours.
+
+**The video path needs ffmpeg to be allowed onto the network.** It fetches the
+stream directly, so a default-deny firewall or a filter like GlassWire will stop
+it, and the failure looks like nothing happening at all. If videos never appear
+but the card always does, check that first:
+
+```sh
+ffmpeg -i https://example.com/anything
+```
+
+A timeout there rather than an HTTP error means ffmpeg is being blocked. Putting
+`ffmpeg.exe` beside the app's binaries gives it a fixed path to allow, and is the
+copy the app prefers anyway.
+
+### On sync
+
+The panel and your speakers are two independent streams of the same song, and
+the browser's own buffering is an offset this app cannot see or measure. It
+starts the video at the reported position and nudges it back into step only when
+it drifts more than 1.5 seconds, at most once every 20 seconds — a correction
+restarts the decoder and jumps to a keyframe, so doing it more often looks worse
+than the drift does.
+
+Expect it to be close, not frame-accurate. For a music video that is fine.
+
+---
+
 ## Using the CLI
 
 ```
@@ -355,6 +493,7 @@ Jungle Leopard Display.exe [--port COMn] [--rotate 0|90|180|270] [--stretch]
     --video FILE [--loop] [--fps N] [--quality 2-31]
                  [--recalibrate] [--hwaccel auto|d3d11va|cuda|qsv]
                  [--preprocess none|memory|disk] [--limit MB]
+                 [--per-frame] [--ceiling 50-98] [--rate KB/s]
     --clear-cache
 ```
 
@@ -373,6 +512,12 @@ Jungle Leopard Display.exe [--port COMn] [--rotate 0|90|180|270] [--stretch]
 
 # transcode it once, then loop it forever with no ffmpeg running
 "Jungle Leopard Display.exe" --video clip.gif --loop --preprocess disk
+
+# best quality each frame can afford, rather than one figure for the whole file
+"Jungle Leopard Display.exe" --video clip.mp4 --preprocess disk --per-frame
+
+# the same, allowed a higher data rate - watch the panel, this is what stutters
+"Jungle Leopard Display.exe" --video clip.mp4 --preprocess disk --rate 1400
 
 # same, but cap the pack cache at 2 GB (--limit applies to whichever mode is set)
 "Jungle Leopard Display.exe" --video clip.gif --loop --preprocess disk --limit 2048
@@ -448,7 +593,7 @@ int32_t jl_get_last_frame(uint8_t*, int32_t);  // the JPEG actually on the glass
 ```
 
 Full contract in [`JLDisplayNative/jl_api.h`](JLDisplayNative/jl_api.h). The C#
-side checks `sizeof(JlRenderOpts) == 88` and `sizeof(JlStatus) == 1168` at
+side checks `sizeof(JlRenderOpts) == 100` and `sizeof(JlStatus) == 1184` at
 startup, so struct drift fails loudly instead of corrupting memory silently.
 
 ---
@@ -463,6 +608,8 @@ startup, so struct drift fails loudly instead of corrupting memory silently.
 | `%LOCALAPPDATA%\JungleLeopardDisplay\downloads\` | videos fetched from YouTube |
 | `%LOCALAPPDATA%\JungleLeopardDisplay\overlays.json` | overlay profiles and layers |
 | `%LOCALAPPDATA%\JungleLeopardDisplay\overlay-assets\` | images used by overlay layers |
+| `%LOCALAPPDATA%\JungleLeopardDisplay\music-art\` | album art and blurred backdrops, cache |
+| `%LOCALAPPDATA%\JungleLeopardDisplay\music-cache.json` | which video matched which track |
 | `%LOCALAPPDATA%\JungleLeopardDisplay\manager.log` | connection events, errors |
 | `%LOCALAPPDATA%\jl_display\calibration.txt` | **shared** with the CLI |
 | `%LOCALAPPDATA%\jl_display\packs\*.jlp` | preprocessed video frames, **shared** |
@@ -472,8 +619,9 @@ The calibration cache is keyed on each file's absolute path, size, timestamp and
 filter chain, so re-encoding or replacing a video invalidates its entry
 automatically — and a video calibrated in one program is instant in the other.
 
-Packs are keyed on the same material plus the frame rate and the calibrated
-quality, and the key is the filename, so a stale pack can never be mistaken for a
+Packs are keyed on the same material plus the frame rate and either the
+calibrated quality or the per-frame cap and byte budget, and the key is the
+filename, so a stale pack can never be mistaken for a
 current one — it simply stops being looked up and ages out. The CLI and the
 manager share them the same way they share calibration.
 
@@ -564,6 +712,11 @@ intra-coded and therefore the most detailed frames in the stream, which makes
 them a conservative proxy. Surveying the *whole* file matters — calibrating on
 the first few seconds badly underestimates a video that gets busier later.
 
+A preprocessed item can do better: see [quality per frame](#quality-per-frame),
+which budgets each frame out of a data rate instead and does not calibrate at
+all. Note the difference between the two limits — 80 KB is what one frame may
+be, and it is *not* 30 times that per second.
+
 **SPI-class panels.** If the image path doesn't work on your unit, check
 `checkIsSPI()` in the vendor app's `main/util/common.js` against your model
 string. Those take raw RGB565 big-endian with **no** length header and no
@@ -578,6 +731,15 @@ commands are identical either way; only the pixel path differs.
 vendor app, a running CLI, or the manager itself. In the manager, use
 **Settings → Release device** to hand it over, then **Reconnect** to take it
 back.
+
+**The panel is stuck on an old frame after the machine slept** — this was a real
+bug and is fixed; if you see it again, the log is the place to look. The manager
+now releases the port when Windows says it is suspending and reopens it on wake,
+because neither the handle nor the port going stale is something the host can
+detect: the panel will happily accept writes it is no longer drawing. You should
+see `suspending: released the panel` and then `resumed: reconnecting to the
+panel` in `manager.log`. This needs **Auto-reconnect** on; with it off, a wake
+leaves the panel released deliberately, and the log says so.
 
 **"ffmpeg.exe not found"** — install it, or drop `ffmpeg.exe` next to the
 binaries. The manager checks once at startup and says so via a tray balloon,
@@ -616,6 +778,7 @@ JLDisplayCore/        protocol, device I/O, ffmpeg, calibration cache, frame pac
 JLDisplayNative/      flat C API over the core, for P/Invoke
 JLDisplayManager/     WPF tray app (net9.0-windows, x64)
   Services/Ai/        SwarmUI client, LLM clients, prompt enhancer, pipeline
+  Services/Music/     media-session follower, album art, video resolver
 Jungle Leopard Display/   the CLI
 docs/                 screenshots
 ```

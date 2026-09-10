@@ -3,16 +3,82 @@
 
 #include "jl_internal.h"
 
+// Only for the pre-1803 fallback in Pacer, where timeBeginPeriod is the one way
+// left to get Sleep down to a millisecond.
+#include <timeapi.h>
+#pragma comment(lib, "winmm.lib")
+
 namespace jl {
 
     namespace detail {
 
+        Pacer::~Pacer()
+        {
+            if (timer_) CloseHandle(timer_);
+            if (raisedTimerPeriod_) timeEndPeriod(1);
+        }
+
         void Pacer::Start(int fps)
         {
-            periodMs = 1000 / (DWORD)(fps > 0 ? fps : 30);
-            startedAt = GetTickCount();
-            nextFrameAt = startedAt;
-            lastKeepAlive = startedAt;
+            LARGE_INTEGER f{}, c{};
+            QueryPerformanceFrequency(&f);
+            QueryPerformanceCounter(&c);
+
+            freq_ = f.QuadPart ? f.QuadPart : 1;
+            origin_ = c.QuadPart;
+            frame_ = 0;
+            slip_ = 0;
+            fps_ = fps > 0 ? fps : 30;
+            lastKeepAlive_ = 0;
+
+            // Win10 1803 and later. The flag is the whole point: without it a
+            // waitable timer is no finer than Sleep and this buys nothing.
+            if (!timer_) {
+                timer_ = CreateWaitableTimerExW(nullptr, nullptr,
+                    CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+
+                // Older than that: raise the global timer resolution instead and
+                // put it back in the destructor. Never both — this one is a
+                // system-wide setting and costs power everywhere.
+                if (!timer_ && !raisedTimerPeriod_)
+                    raisedTimerPeriod_ = timeBeginPeriod(1) == TIMERR_NOERROR;
+            }
+        }
+
+        DWORD Pacer::ElapsedMs() const
+        {
+            LARGE_INTEGER c{};
+            QueryPerformanceCounter(&c);
+            return (DWORD)(1000 * (c.QuadPart - origin_) / freq_);
+        }
+
+        void Pacer::WaitUntil(long long targetCount)
+        {
+            for (;;) {
+                LARGE_INTEGER c{};
+                QueryPerformanceCounter(&c);
+
+                const long long remain = targetCount - c.QuadPart;
+                if (remain <= 0) return;
+
+                // 100 ns units, negative for a relative wait.
+                const long long hundredNs = remain * 10'000'000 / freq_;
+                if (hundredNs <= 0) return;
+
+                if (timer_) {
+                    LARGE_INTEGER due{};
+                    due.QuadPart = -hundredNs;
+                    if (SetWaitableTimer(timer_, &due, 0, nullptr, nullptr, FALSE)) {
+                        WaitForSingleObject(timer_, INFINITE);
+                        return;
+                    }
+                }
+
+                const DWORD ms = (DWORD)(hundredNs / 10'000);
+                if (ms == 0) return;   // inside a millisecond; close enough
+                Sleep(ms);
+                return;
+            }
         }
 
         DWORD Pacer::WaitForSlot()
@@ -20,19 +86,31 @@ namespace jl {
             // Pace against the wall clock rather than relying on ffmpeg's -re,
             // which does not throttle reliably when writing to a pipe — and
             // which a pack has no equivalent of at all.
-            DWORD now = GetTickCount();
-            if ((LONG)(nextFrameAt - now) > 0) Sleep(nextFrameAt - now);
-            nextFrameAt += periodMs;
+            //
+            // The slot is derived from the frame index every time, so rounding
+            // cannot accumulate: frame n is due exactly n/fps seconds in.
+            ++frame_;
+            const long long due = origin_ + slip_ + freq_ * frame_ / fps_;
 
-            now = GetTickCount();
-            if ((LONG)(now - nextFrameAt) > 500) nextFrameAt = now;   // fell behind; resync
-            return now;
+            WaitUntil(due);
+
+            LARGE_INTEGER c{};
+            QueryPerformanceCounter(&c);
+
+            // Fell behind by more than half a second — a stalled ffmpeg, a
+            // device write that blocked. Absorb it into `slip_` rather than
+            // trying to catch up frame by frame. It is deliberately separate
+            // from `origin_`, so a resync moves the schedule without ever
+            // walking the reported elapsed time backwards.
+            if (c.QuadPart - due > freq_ / 2) slip_ += c.QuadPart - due;
+
+            return (DWORD)(1000 * (c.QuadPart - origin_) / freq_);
         }
 
         bool Pacer::KeepAliveIfDue(Device& device, DWORD now)
         {
-            if (now - lastKeepAlive < kLiveKeepAliveMs) return true;
-            lastKeepAlive = now;
+            if (now - lastKeepAlive_ < kLiveKeepAliveMs) return true;
+            lastKeepAlive_ = now;
             return device.SendCommand(cmd::Live);
         }
 
@@ -46,7 +124,9 @@ namespace jl {
         PlaybackStats* stats,
         SeekFn takeSeek, void* seekUser,
         PositionFn onPosition, void* positionUser,
-        const Compositor* comp)
+        const Compositor* comp,
+        const StreamSource* stream,
+        ChildFn onChild, void* childUser)
     {
         auto aborted = [&] { return abort && abort(abortUser); };
 
@@ -69,7 +149,13 @@ namespace jl {
 
         const std::wstring filter = detail::BuildFilter(resolved.stretch, resolved.rotate);
 
-        const int quality = ResolveQuality(path, resolved, abort, abortUser);
+        // A stream commits to a quality up front. Calibrating one would mean a
+        // survey pass over a network source — downloading the track twice to
+        // decide how to encode it — and by the time that finished the thing
+        // being followed would have moved on.
+        const int quality = stream
+            ? stream->quality
+            : ResolveQuality(path, resolved, abort, abortUser);
         if (quality < 0) return false;   // -1 unencodable, -2 cancelled
         if (aborted()) return false;
 
@@ -93,12 +179,17 @@ namespace jl {
         // Only worth asking once, and only if anyone is listening: it spawns
         // ffprobe, and a file that will not say how long it is will not start
         // saying so partway through.
-        const double duration = onPosition ? ProbeDurationSeconds(ffmpeg, path) : 0.0;
+        // ffprobe is skipped entirely for a stream: it is another request to the
+        // server for something the caller already knows, and a live source may
+        // not answer at all.
+        const double duration = stream
+            ? stream->duration
+            : (onPosition ? ProbeDurationSeconds(ffmpeg, path) : 0.0);
 
         // Where the current ffmpeg run was told to start. Position is this plus
         // however much has been emitted since, because the frames leave ffmpeg
         // at exactly the rate we asked for.
-        double startAt = 0.0;
+        double startAt = stream ? stream->startAt : 0.0;
         double pendingSeek = -1.0;
 
         // Loop at the application level by restarting ffmpeg. -stream_loop proved
@@ -110,10 +201,17 @@ namespace jl {
             }
 
             detail::FfmpegPipe pipe;
-            std::wstring cl = detail::VideoCommand(ffmpeg, path, filter, resolved.hwaccel,
-                resolved.fps, quality, false, false, 0, false, startAt);
+            std::wstring cl = stream
+                ? detail::StreamCommand(ffmpeg, path, stream->inputArgs, filter,
+                    resolved.hwaccel, resolved.fps, quality, startAt)
+                : detail::VideoCommand(ffmpeg, path, filter, resolved.hwaccel,
+                    resolved.fps, quality, false, false, 0, false, startAt);
             if (!detail::StartFfmpegPipe(cl, pipe)) { ok = false; break; }
             ++passes;
+
+            // Published before the read loop, so an abort raised at any point
+            // during this pass has something to interrupt.
+            if (onChild) onChild(pipe.process, childUser);
 
             size_t inPass = 0;
             std::vector<uint8_t> acc, frame;
@@ -164,7 +262,7 @@ namespace jl {
                 if (!pace.KeepAliveIfDue(device, now)) { ok = false; break; }
 
                 if ((sent % 30) == 0) {
-                    double secs = (now - pace.startedAt) / 1000.0;
+                    double secs = now / 1000.0;
                     Log(LogLevel::Progress, L"%zu frames, %.1f fps, %zu dropped",
                         sent, secs > 0 ? sent / secs : 0.0, dropped);
                 }
@@ -172,6 +270,12 @@ namespace jl {
 
             DWORD exitCode = 0;
             if (pipe.process) GetExitCodeProcess(pipe.process, &exitCode);
+
+            // Withdrawn BEFORE the handle is closed. The holder takes a lock
+            // around both this and its own use of the handle, so once this
+            // returns nobody can be about to terminate a handle we are closing.
+            if (onChild) onChild(nullptr, childUser);
+
             pipe.Close();
 
             // A seek kills ffmpeg mid-stream on purpose, so its exit code says
@@ -184,9 +288,9 @@ namespace jl {
             // next lap starts at the top, not back at the mark.
             if (pendingSeek < 0.0) startAt = 0.0;
 
-        } while (ok && !aborted() && (pendingSeek >= 0.0 || resolved.loop));
+        } while (ok && !aborted() && (pendingSeek >= 0.0 || (resolved.loop && !stream)));
 
-        const double elapsed = (GetTickCount() - pace.startedAt) / 1000.0;
+        const double elapsed = pace.ElapsedMs() / 1000.0;
 
         Log(LogLevel::Info, L"%zu frames sent over %zu pass(es)%s", sent, passes,
             dropped ? L", some dropped as oversized" : L"");

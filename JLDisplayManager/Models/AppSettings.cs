@@ -46,6 +46,9 @@ public sealed class AppSettings : INotifyPropertyChanged
     private PreprocessMode _preprocess = PreprocessMode.Memory;
     private int _memoryBudgetMB = 512;
     private int _diskBudgetMB = 8192;
+    private bool _perFrameQuality = true;
+    private int _qualityCeiling = 84;
+    private int _byteRateKBs = 1150;
 
     /// <summary>Global default; a MediaItem may override it.</summary>
     public int Rotate
@@ -109,6 +112,47 @@ public sealed class AppSettings : INotifyPropertyChanged
     {
         get => _diskBudgetMB;
         set => Set(ref _diskBudgetMB, Math.Clamp(value, 128, 262144));
+    }
+
+    /// <summary>
+    /// Whether a preprocessed frame gets the best quality it can afford rather
+    /// than the one figure the busiest frame in its file allows. On by default:
+    /// the whole reason to prepare frames up front is that there is no longer
+    /// any need to commit to a figure before seeing them. It costs pack size,
+    /// which <see cref="QualityCeiling"/> is what bounds.
+    /// </summary>
+    public bool PerFrameQuality
+    {
+        get => _perFrameQuality;
+        set => Set(ref _perFrameQuality, value);
+    }
+
+    /// <summary>
+    /// The best a single frame is allowed to be, as a percentage. Not surfaced:
+    /// <see cref="ByteRateKBs"/> binds first on nearly all content, and this
+    /// only decides how good a frame simple enough to fit anyway is allowed to
+    /// get. Here so it can be changed in settings.json if that ever matters.
+    /// </summary>
+    public int QualityCeiling
+    {
+        get => _qualityCeiling;
+        set => Set(ref _qualityCeiling, Math.Clamp(value, 50, 98));
+    }
+
+    /// <summary>
+    /// How many kilobytes a second of preprocessed frames the panel is asked to
+    /// swallow, divided by the frame rate to get what one frame may spend. This
+    /// is the setting that decides whether playback stutters, and the limit is
+    /// the panel's own decoding rather than the link — the link measures at
+    /// 3 MB/s, and the panel reports nothing when it falls behind.
+    ///
+    /// The default is the rate the app has always run at — one -q:v 3 frame is
+    /// about 37 KB, which at 30 fps is close to this exactly.
+    /// </summary>
+    public int ByteRateKBs
+    {
+        get => _byteRateKBs;
+        set => Set(ref _byteRateKBs, Math.Clamp(value, 400, 4096));
     }
 
     /// <summary>Empty means autodetect by hardware ID, which is nearly always right.</summary>
@@ -190,6 +234,87 @@ public sealed class AppSettings : INotifyPropertyChanged
         set => Set(ref _useHwInfo, value);
     }
 
+    // -----------------------------------------------------------------------
+    // What is playing elsewhere on the machine
+    // -----------------------------------------------------------------------
+
+    private bool _useMediaSession = true;
+    private string _mediaSessionApp = "";
+    private bool _followMusic;
+    private bool _musicVideo = true;
+    private int _musicCacheMB = 4096;
+    private int _musicCacheDays = 14;
+
+    /// <summary>
+    /// Publish <c>music.*</c> sensors from the Windows media session — whatever
+    /// is playing in a browser tab or a music player. On by default and cheap:
+    /// the reader is one thread that polls a property, and a machine with
+    /// nothing playing simply reports nothing.
+    /// </summary>
+    public bool UseMediaSession
+    {
+        get => _useMediaSession;
+        set => Set(ref _useMediaSession, value);
+    }
+
+    /// <summary>
+    /// Which player to follow, by source app id, or empty to follow whichever
+    /// one is playing. An id rather than a name because that is what Windows
+    /// reports, and it is frequently opaque — Firefox calls itself
+    /// <c>308046B0AF4A39CB</c>.
+    /// </summary>
+    public string MediaSessionApp
+    {
+        get => _mediaSessionApp;
+        set => Set(ref _mediaSessionApp, value ?? "");
+    }
+
+    /// <summary>
+    /// Whether the panel follows the media session. Off by default, and
+    /// remembered: a pump display is set once and left, so a machine that was
+    /// following when it shut down should be following when it comes back.
+    /// </summary>
+    public bool FollowMusic
+    {
+        get => _followMusic;
+        set => Set(ref _followMusic, value);
+    }
+
+    /// <summary>
+    /// Whether following also streams the music video, falling back to the card
+    /// when no video can be found — which on a music service is most tracks.
+    /// Off means the card, always, and no yt-dlp searching at all.
+    /// </summary>
+    public bool MusicVideo
+    {
+        get => _musicVideo;
+        set => Set(ref _musicVideo, value);
+    }
+
+    /// <summary>
+    /// How much disk the downloaded music videos may take. Reaching it drops
+    /// the least recently played rather than refusing to fetch new ones.
+    /// </summary>
+    public int MusicCacheMB
+    {
+        get => _musicCacheMB;
+        set => Set(ref _musicCacheMB, Math.Clamp(value, 128, 262144));
+    }
+
+    /// <summary>
+    /// How long a downloaded video is kept after it was last played, in days.
+    /// 0 keeps them until the size budget alone evicts them.
+    ///
+    /// Age matters more than size here: a listening habit moves on, and a
+    /// library that only ever grew to its budget would be full of tracks
+    /// nobody has played in months.
+    /// </summary>
+    public int MusicCacheDays
+    {
+        get => _musicCacheDays;
+        set => Set(ref _musicCacheDays, Math.Clamp(value, 0, 3650));
+    }
+
     private static int Normalise(int degrees)
     {
         int d = ((degrees % 360) + 360) % 360;
@@ -242,6 +367,24 @@ public static class Storage
     /// </summary>
     public static string OverlayAssetDirectory { get; } = Path.Combine(Directory, "overlay-assets");
 
+    /// <summary>
+    /// Album art from the media session, and the blurred backdrops built from
+    /// it. Kept apart from overlay-assets because these are cache, not
+    /// documents: nothing here is referenced by a saved profile, and deleting
+    /// the lot costs one redraw.
+    /// </summary>
+    public static string MusicArtDirectory { get; } = Path.Combine(Directory, "music-art");
+
+    /// <summary>
+    /// Music videos fetched for the follower, one file per YouTube id.
+    ///
+    /// Cache, not library: nothing references these by name and deleting the
+    /// folder costs only the next download. They are kept because a track
+    /// played twice should start instantly the second time — and because a file
+    /// on disk can be seeked, which a YouTube stream cannot.
+    /// </summary>
+    public static string MusicVideoDirectory { get; } = Path.Combine(Directory, "music-videos");
+
     private static string SettingsPath => Path.Combine(Directory, "settings.json");
     private static string LibraryPath => Path.Combine(Directory, "library.json");
     private static string AiPath => Path.Combine(Directory, "ai.json");
@@ -267,6 +410,8 @@ public static class Storage
         System.IO.Directory.CreateDirectory(DownloadDirectory);
         System.IO.Directory.CreateDirectory(GeneratedDirectory);
         System.IO.Directory.CreateDirectory(OverlayAssetDirectory);
+        System.IO.Directory.CreateDirectory(MusicArtDirectory);
+        System.IO.Directory.CreateDirectory(MusicVideoDirectory);
     }
 
     public static AppSettings LoadSettings() => Load<AppSettings>(SettingsPath) ?? new AppSettings();

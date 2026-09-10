@@ -122,6 +122,21 @@ namespace jl {
             }
         }
 
+        bool ReadRawFrame(FfmpegPipe& pipe, uint8_t* dst, size_t bytes)
+        {
+            size_t got = 0;
+            while (got < bytes) {
+                const size_t left = bytes - got;
+                const DWORD  want = (DWORD)(left > (1u << 20) ? (1u << 20) : left);
+
+                DWORD n = 0;
+                if (!ReadFile(pipe.readEnd, dst + got, want, &n, nullptr) || n == 0)
+                    return false;   // pipe closed, or a final frame cut short
+                got += n;
+            }
+            return true;
+        }
+
         std::string ReadAllText(FfmpegPipe& pipe)
         {
             std::string out;
@@ -222,6 +237,74 @@ namespace jl {
             // surveying without this measured a file the panel would never see.
             cl += L" -pix_fmt yuvj420p";
             cl += L" -f image2pipe -vcodec mjpeg -q:v " + std::to_wstring(quality) + L" -";
+            return cl;
+        }
+
+        std::wstring StreamCommand(const std::wstring& ffmpeg, const std::wstring& url,
+            const std::wstring& inputArgs, const std::wstring& filter,
+            const std::wstring& hwaccel, int fps, int quality, double startSeconds)
+        {
+            std::wstring cl = L"\"" + ffmpeg + L"\" -y -loglevel error";
+            if (!hwaccel.empty()) cl += L" -hwaccel " + hwaccel;
+
+            // Network options belong only to a network source. Passing them for
+            // a local file is at best noise, and reconnection semantics make no
+            // sense for something that cannot disconnect.
+            const bool remote =
+                url.compare(0, 7, L"http://") == 0 || url.compare(0, 8, L"https://") == 0;
+
+            if (remote) {
+                // A media URL is served over HTTP and the connection does drop —
+                // for a four-minute track that is the difference between a blip
+                // and the panel stopping. These are input options and have to
+                // precede both -i and any caller options that also do.
+                cl += L" -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5";
+
+                // A ceiling on how long a read may stall, in microseconds.
+                //
+                // Reconnection without one is unbounded: a connection that is
+                // refused or silently dropped leaves ffmpeg retrying and the
+                // panel holding whatever frame it had, with nothing reporting a
+                // fault. Ten seconds is far longer than any healthy hiccup and
+                // short enough that a dead stream gives up while somebody is
+                // still watching it.
+                cl += L" -rw_timeout 10000000";
+            }
+
+            // Headers and a user agent from the caller. A signed media URL
+            // frequently 403s without the agent the signature was issued to.
+            if (!inputArgs.empty()) cl += L" " + inputArgs;
+
+            // Joining a track already in progress. Before -i so the server is
+            // asked for a byte range rather than the whole thing being fetched
+            // and discarded.
+            if (startSeconds > 0) cl += L" -ss " + std::to_wstring(startSeconds);
+
+            cl += L" -i \"" + url + L"\"";
+
+            // Nothing here ever plays audio — the panel has no speaker, and
+            // somebody else is already making the sound this is following.
+            cl += L" -an";
+
+            cl += L" -vf \"" + filter + L",fps=" + std::to_wstring(fps) + L"\"";
+            cl += L" -pix_fmt yuvj420p";
+            cl += L" -f image2pipe -vcodec mjpeg -q:v " + std::to_wstring(quality) + L" -";
+            return cl;
+        }
+
+        std::wstring RawVideoCommand(const std::wstring& ffmpeg, const std::wstring& input,
+            const std::wstring& filter, const std::wstring& hwaccel, int fps)
+        {
+            std::wstring cl = L"\"" + ffmpeg + L"\" -y -loglevel error";
+            if (!hwaccel.empty()) cl += L" -hwaccel " + hwaccel;
+            cl += L" -i \"" + input + L"\"";
+            cl += L" -vf \"" + filter + L",fps=" + std::to_wstring(fps) + L"\"";
+            // 24bpp BGR, which is what the encoder wants and what a JPEG decodes
+            // to anyway. The pixel format matters as much here as it does for
+            // mjpeg, for the opposite reason: pinning it means a GIF's bgra and
+            // a ProRes file's 4:4:4 arrive in the one layout the encoder reads,
+            // rather than silently changing the meaning of every byte.
+            cl += L" -pix_fmt bgr24 -f rawvideo -";
             return cl;
         }
 

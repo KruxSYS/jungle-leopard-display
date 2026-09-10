@@ -11,6 +11,7 @@ using JLDisplayManager.Models;
 using JLDisplayManager.Models.Overlay;
 using JLDisplayManager.Services;
 using JLDisplayManager.Services.Ai;
+using JLDisplayManager.Services.Music;
 using JLDisplayManager.Services.Overlay;
 using JLDisplayManager.Views;
 
@@ -43,6 +44,7 @@ public partial class App : Application
     private ToolStripMenuItem? _trayPlaylistItem;
     private ToolStripMenuItem? _trayAiItem;
     private ToolStripMenuItem? _trayOverlayItem;
+    private ToolStripMenuItem? _trayMusicItem;
 
     public AppSettings Settings { get; private set; } = new();
     public AppLibrary Library { get; private set; } = new();
@@ -52,6 +54,7 @@ public partial class App : Application
     public PlaylistPlayer Player { get; private set; } = null!;
     public AiPipeline Pipeline { get; private set; } = null!;
     public OverlayService Overlay { get; private set; } = null!;
+    public MusicFollower Music { get; private set; } = null!;
 
     public static new App Current => (App)Application.Current;
 
@@ -113,6 +116,20 @@ public partial class App : Application
             Display = new DisplayService(Settings);
             Player = new PlaylistPlayer(Display, Library);
             Pipeline = new AiPipeline(Ai, Library, Display);
+
+            // The playlist and the pipeline each put themselves back after a
+            // reconnect. A single item shown with ShowOne has neither running,
+            // so nobody would — and after a wake that is exactly the case that
+            // leaves the panel stuck on a frame from before the machine slept.
+            // Here rather than in DisplayService for the same reason the rest of
+            // the arbitration is: it is the only place that knows about both.
+            Display.Reconnected += (_, _) =>
+            {
+                if (Player.Running || Pipeline.Running) return;
+                if (Music is { Running: true }) return;
+                if (Display.Current is { FileExists: true } item) Display.Play(item);
+            };
+
             Display.Start();
 
             // After Display.Start(), so the native session exists before the
@@ -120,6 +137,10 @@ public partial class App : Application
             Overlay = new OverlayService(
                 () => Display.State == NativeMethods.JlState.Playing, Settings);
             Overlay.Start(Overlays);
+
+            // After the overlay: the card it shows IS an overlay profile, so
+            // the follower has nothing to swap to until the service exists.
+            Music = new MusicFollower(Display, Overlay, Overlays, Settings);
         }
         catch (Exception ex)
         {
@@ -142,7 +163,10 @@ public partial class App : Application
         _window = new MainWindow();
         if (!startHidden) _window.Show();
 
+        // Following outranks resuming: it is a mode the user left the app in,
+        // not a thing that happened to be on the panel last time.
         if (Ai.StartWithApp) StartAi();
+        else if (Settings.FollowMusic) StartMusic();
         else if (Settings.ResumeOnStart) Resume();
     }
 
@@ -158,6 +182,7 @@ public partial class App : Application
     public void StartAi()
     {
         Player.Stop();
+        StopMusic();
         Pipeline.Start();
     }
 
@@ -165,7 +190,31 @@ public partial class App : Application
     public void StartPlaylist(Guid? startAt = null)
     {
         Pipeline.Stop();
+        StopMusic();
         Player.Start(startAt);
+    }
+
+    /// <summary>
+    /// Follows the media session, taking the panel from whatever had it.
+    ///
+    /// Remembered, unlike the other two: this is the mode somebody leaves a
+    /// pump display in, so it comes back after a restart.
+    /// </summary>
+    public void StartMusic()
+    {
+        Pipeline.Stop();
+        Player.Stop();
+
+        Settings.FollowMusic = true;
+        Music.Start();
+    }
+
+    public void StopMusic()
+    {
+        if (!Music.Running) return;
+
+        Settings.FollowMusic = false;
+        Music.Stop();
     }
 
     /// <summary>Stops whatever is driving the panel and shows one item.</summary>
@@ -173,6 +222,7 @@ public partial class App : Application
     {
         Pipeline.Stop();
         Player.Stop();
+        StopMusic();
         Display.Play(item);
     }
 
@@ -181,6 +231,7 @@ public partial class App : Application
     {
         Pipeline.Stop();
         Player.Stop();
+        StopMusic();
         Display.Stop();
     }
 
@@ -242,7 +293,11 @@ public partial class App : Application
         _trayAiItem = new ToolStripMenuItem("Start AI slideshow", null,
             (_, _) => { if (Pipeline.Running) Pipeline.Stop(); else StartAi(); });
 
+        _trayMusicItem = new ToolStripMenuItem("Follow what's playing", null,
+            (_, _) => { if (Music.Running) { StopMusic(); Display.Stop(); } else StartMusic(); });
+
         menu.Items.Add(_trayPlaylistItem);
+        menu.Items.Add(_trayMusicItem);
         menu.Items.Add(_trayAiItem);
         menu.Items.Add("Stop", null, (_, _) => StopAll());
         menu.Items.Add(new ToolStripSeparator());
@@ -272,6 +327,7 @@ public partial class App : Application
         Display.PropertyChanged += (_, _) => UpdateTray();
         Pipeline.PropertyChanged += (_, _) => UpdateTray();
         Player.PropertyChanged += (_, _) => UpdateTray();
+        Music.PropertyChanged += (_, _) => UpdateTray();
 
         UpdateTray();
     }
@@ -290,12 +346,19 @@ public partial class App : Application
 
         // The tooltip is capped at 63 characters and silently truncates, so the
         // AI line only earns its place there while the pipeline is running.
-        string tip = Pipeline.Running && ai.Length > 0
-            ? $"Jungle Leopard — {ai}"
-            : $"Jungle Leopard — {panel}";
+        string tip = Music.Running && Music.Summary.Length > 0
+            ? $"Jungle Leopard — {Music.Summary}"
+            : Pipeline.Running && ai.Length > 0
+                ? $"Jungle Leopard — {ai}"
+                : $"Jungle Leopard — {panel}";
         _tray.Text = tip.Length <= 63 ? tip : tip[..60] + "…";
 
-        if (_trayPanelStatus is not null) _trayPanelStatus.Text = panel;
+        if (_trayPanelStatus is not null)
+        {
+            _trayPanelStatus.Text = Music.Running && Music.Summary.Length > 0
+                ? Music.Summary
+                : panel;
+        }
 
         if (_trayAiStatus is not null)
         {
@@ -313,6 +376,9 @@ public partial class App : Application
 
         if (_trayAiItem is not null)
             _trayAiItem.Text = Pipeline.Running ? "Stop AI slideshow" : "Start AI slideshow";
+
+        if (_trayMusicItem is not null)
+            _trayMusicItem.Text = Music.Running ? "Stop following" : "Follow what's playing";
     }
 
     private static Icon LoadIcon()
@@ -391,6 +457,11 @@ public partial class App : Application
     /// <summary>The only path that actually ends the process.</summary>
     public void ExitApp()
     {
+        // Before SaveAll: following swaps the active overlay profile for the
+        // card, and saving while swapped would persist the card as the profile
+        // the user had chosen.
+        Music?.Stop();
+
         SaveAll();
 
         Pipeline.Dispose();

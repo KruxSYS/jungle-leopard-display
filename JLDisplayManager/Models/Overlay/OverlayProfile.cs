@@ -181,6 +181,72 @@ public sealed class OverlaySettings
     /// than a blank panel and an instruction to go and edit some JSON.
     /// Deliberately modest: two corner readouts that stay out of the picture.
     /// </summary>
+    /// <summary>The well-known id of the built-in "Now playing" card.</summary>
+    public static readonly Guid NowPlayingId = new("6d757369-6300-4000-8000-6e6f77706c79");
+
+    // The download indicator's layers also have fixed ids, so a card saved
+    // before they existed can be given them without duplicating anything.
+    private static readonly Guid FetchTextId = new("6d757369-6301-4000-8000-6e6f77706c79");
+    private static readonly Guid FetchBarId = new("6d757369-6302-4000-8000-6e6f77706c79");
+
+    /// <summary>
+    /// The line that says a video is being fetched, and the bar under it.
+    ///
+    /// Both are bound to <c>music.fetching</c> and so are invisible unless a
+    /// download is actually running — which is most of the time, since a track
+    /// heard before plays from the cache with no fetch at all.
+    /// </summary>
+    private static TextLayer FetchText() => new()
+    {
+        Id = FetchTextId,
+        Name = "Fetching label",
+        Anchor = LayerAnchor.MiddleLeft,
+        X = 356, Y = 136, Width = 552, Height = 22,
+        Template = "Fetching video  {music.fetch:0}%",
+        FontSize = 15,
+        Bold = false,
+        Colour = "dim",
+        VisibleWhen = VisibilityRule.SensorAbove,
+        VisibleSource = "music.fetching",
+        VisibleThreshold = 0.5,
+    };
+
+    private static BarLayer FetchBar() => new()
+    {
+        Id = FetchBarId,
+        Name = "Fetching bar",
+        Anchor = LayerAnchor.MiddleLeft,
+        X = 356, Y = 160, Width = 552, Height = 6,
+        Source = "music.fetch",
+        Min = 0,
+        Max = 100,
+
+        // Deliberately not the track bar's colour: two green bars one above the
+        // other would read as one thing at arm's length.
+        FillColour = "cool",
+        VisibleWhen = VisibilityRule.SensorAbove,
+        VisibleSource = "music.fetching",
+        VisibleThreshold = 0.5,
+    };
+
+    /// <summary>
+    /// Adds anything the shipped card has gained since a saved copy of it was
+    /// written, and returns how many layers that was.
+    ///
+    /// The card lives in the user's profile list and is theirs to edit, so it
+    /// cannot simply be replaced on upgrade. Matching on the fixed layer ids
+    /// adds only what is genuinely missing and leaves every edit alone.
+    /// </summary>
+    public static int UpgradeNowPlaying(OverlayProfile card)
+    {
+        int added = 0;
+
+        if (!card.Layers.Exists(l => l.Id == FetchTextId)) { card.Layers.Add(FetchText()); added++; }
+        if (!card.Layers.Exists(l => l.Id == FetchBarId)) { card.Layers.Add(FetchBar()); added++; }
+
+        return added;
+    }
+
     public static OverlayProfile CreateDefault()
     {
         var profile = new OverlayProfile { Name = "Essentials" };
@@ -279,6 +345,176 @@ public sealed class OverlaySettings
             Align = TextAlign.Right,
             ShadowOffsetX = 2,
             ShadowOffsetY = 2,
+        });
+
+        return profile;
+    }
+
+    /// <summary>
+    /// The card shown while following whatever is playing elsewhere on the
+    /// machine — the fallback for a track with no video, which on YouTube Music
+    /// is most of them.
+    ///
+    /// It is an ordinary profile on purpose. The alternative was a private
+    /// renderer that draws a card, and this way the whole thing is editable in
+    /// the editor that already exists: move the art, restyle the title, change
+    /// the theme. Nothing about it is special except that the follower switches
+    /// to it.
+    ///
+    /// It draws over the blurred backdrop <see cref="Services.Music.MusicArt"/>
+    /// puts on the panel, which is why the first layer is a scrim: the backdrop
+    /// is deliberately left bright so the amount of darkening is a property of
+    /// this profile rather than baked into a cache file.
+    /// </summary>
+    public static OverlayProfile CreateNowPlaying()
+    {
+        // A fixed id rather than a fresh one: the follower has to find this
+        // profile again on every launch, and the user has to be able to edit it
+        // and keep their edits.
+        var profile = new OverlayProfile
+        {
+            Id = NowPlayingId,
+            Name = "Now playing",
+        };
+
+        profile.Layers.Add(new ShapeLayer
+        {
+            Name = "Scrim",
+            Anchor = LayerAnchor.TopLeft,
+            X = 0, Y = 0, Width = 960, Height = 480,
+            Kind = ShapeKind.Rectangle,
+            CornerRadius = 0,
+            FillColour = "#B0000000",
+        });
+
+        // "{music.art}" is a path, resolved per draw. A track with no art
+        // leaves it unavailable and this draws nothing at all, which is why
+        // there is no placeholder square behind it.
+        profile.Layers.Add(new ImageLayer
+        {
+            Name = "Album art",
+            Anchor = LayerAnchor.MiddleLeft,
+            X = 56, Y = -8, Width = 260, Height = 260,
+            File = "{music.art}",
+            PreserveAspect = true,
+            VisibleWhen = VisibilityRule.SensorBelow,
+            VisibleSource = "music.idle",
+            VisibleThreshold = 0.5,
+        });
+
+        profile.Layers.Add(new TextLayer
+        {
+            Name = "Title",
+            Anchor = LayerAnchor.MiddleLeft,
+            X = 356, Y = -96, Width = 552, Height = 96,
+            Template = "{music.title}",
+            FontSize = 44,
+            Wrap = true,
+            ShadowOffsetX = 2,
+            ShadowOffsetY = 2,
+            VisibleWhen = VisibilityRule.SensorBelow,
+            VisibleSource = "music.idle",
+            VisibleThreshold = 0.5,
+        });
+
+        profile.Layers.Add(new TextLayer
+        {
+            Name = "Artist",
+            Anchor = LayerAnchor.MiddleLeft,
+            X = 356, Y = 8, Width = 552, Height = 40,
+            Template = "{music.artist}",
+            FontSize = 30,
+            Bold = false,
+            Colour = "dim",
+            ShadowOffsetX = 2,
+            ShadowOffsetY = 2,
+            VisibleWhen = VisibilityRule.SensorBelow,
+            VisibleSource = "music.idle",
+            VisibleThreshold = 0.5,
+        });
+
+        // The bar and the track length are hidden rather than empty when the
+        // player does not report a duration — which happens for the first few
+        // seconds of a track, and permanently for a live stream. An empty bar
+        // and a "--" read as broken; nothing reads as "no length here".
+        profile.Layers.Add(new BarLayer
+        {
+            Name = "Progress",
+            Anchor = LayerAnchor.MiddleLeft,
+            X = 356, Y = 76, Width = 552, Height = 8,
+            Source = "music.progress",
+            Min = 0,
+            Max = 100,
+            FillColour = "good",
+            VisibleWhen = VisibilityRule.SensorAbove,
+            VisibleSource = "music.duration",
+            VisibleThreshold = 0,
+        });
+
+        profile.Layers.Add(new TextLayer
+        {
+            Name = "Elapsed",
+            Anchor = LayerAnchor.MiddleLeft,
+            X = 356, Y = 104, Width = 200, Height = 28,
+            Template = "{music.elapsed}",
+            FontSize = 20,
+            Bold = false,
+            Colour = "dim",
+            VisibleWhen = VisibilityRule.SensorBelow,
+            VisibleSource = "music.idle",
+            VisibleThreshold = 0.5,
+        });
+
+        profile.Layers.Add(new TextLayer
+        {
+            Name = "Length",
+            Anchor = LayerAnchor.MiddleLeft,
+            X = 708, Y = 104, Width = 200, Height = 28,
+            Template = "{music.length}",
+            FontSize = 20,
+            Bold = false,
+            Colour = "dim",
+            Align = TextAlign.Right,
+            VisibleWhen = VisibilityRule.SensorAbove,
+            VisibleSource = "music.duration",
+            VisibleThreshold = 0,
+        });
+
+        profile.Layers.Add(FetchText());
+        profile.Layers.Add(FetchBar());
+
+        // The only thing on the panel when no player is running at all. Every
+        // other music sensor is unavailable then, which is what hides the rest
+        // of the card rather than leaving it full of dashes.
+        profile.Layers.Add(new TextLayer
+        {
+            Name = "Nothing playing",
+            Anchor = LayerAnchor.Centre,
+            X = 0, Y = 0, Width = 600, Height = 44,
+            Template = "Nothing playing",
+            FontSize = 30,
+            Bold = false,
+            Colour = "dim",
+            Align = TextAlign.Centre,
+            VisibleWhen = VisibilityRule.SensorAbove,
+            VisibleSource = "music.idle",
+            VisibleThreshold = 0.5,
+        });
+
+        // Only while the track is actually stopped, so it does not sit over a
+        // playing card saying nothing useful.
+        profile.Layers.Add(new TextLayer
+        {
+            Name = "Paused",
+            Anchor = LayerAnchor.TopRight,
+            X = 24, Y = 20, Width = 200, Height = 30,
+            Template = "{music.state}",
+            FontSize = 20,
+            Colour = "warm",
+            Align = TextAlign.Right,
+            VisibleWhen = VisibilityRule.SensorBelow,
+            VisibleSource = "music.playing",
+            VisibleThreshold = 0.5,
         });
 
         return profile;

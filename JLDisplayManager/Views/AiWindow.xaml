@@ -304,7 +304,7 @@
                                           Content="Answer without thinking first"/>
                                 <TextBlock Margin="24,0,0,8" FontSize="11" TextWrapping="Wrap"
                                            Foreground="{StaticResource TextDim}"
-                                           Text="On by default. Writing an image prompt is not a reasoning task, and a local model that thinks first can spend every token it has on a one-line brief and return nothing at all. Untick it for the real OpenAI API, which refuses a request carrying fields it does not know."/>
+                                            Text="Off by default, so a local reasoning model may think before it answers. Tick it to make a local runner answer without reasoning first — a model that thinks first can spend every token it has on a one-line brief and return nothing at all. The real OpenAI API refuses the fields this tick adds, so keep it off there."/>
 
                                 <CheckBox x:Name="RequireEnhancementBox"
                                           Content="Skip generating if enhancement fails"/>

@@ -28,6 +28,9 @@
     <ClCompile Include="jl_ffmpeg.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="jl_jpeg.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="jl_log.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

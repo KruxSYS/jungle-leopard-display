@@ -460,7 +460,7 @@ public sealed class AiSettings : INotifyPropertyChanged
     private int _maxTokens = 400;
     private int _llmTimeoutSeconds = 120;
     private bool _requireEnhancement;
-    private bool _disableThinking = true;
+    private bool _disableThinking = false;
 
     public LlmProvider Provider
     {
@@ -524,13 +524,14 @@ public sealed class AiSettings : INotifyPropertyChanged
     /// <summary>
     /// Asks an OpenAI-compatible endpoint to answer without reasoning first.
     ///
-    /// On by default. Writing an image prompt is not a reasoning task, and a
-    /// local reasoning model handed a one-line brief will happily spend every
-    /// token it has thinking and return empty content — which looks exactly
-    /// like a broken endpoint and is the failure this app actually hit.
+    /// Off by default, so a local reasoning model is free to think before it
+    /// answers. Tick it when a local model handed a one-line brief would
+    /// rather spend every token it has thinking and return empty content —
+    /// which looks exactly like a broken endpoint and is the failure this
+    /// app actually hit.
     ///
-    /// Turn it off for the real OpenAI API, which rejects a body carrying
-    /// fields it does not recognise.
+    /// The real OpenAI API rejects a body carrying the fields this adds, so
+    /// keep it off there.
     /// </summary>
     public bool DisableThinking
     {

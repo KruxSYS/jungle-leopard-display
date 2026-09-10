@@ -160,6 +160,12 @@ namespace jl {
             error = L"quality must be 2 (best) to 31 (worst)";
             return false;
         }
+        if (opts.qualityCeiling != 0 &&
+            (opts.qualityCeiling < kMinQualityCeiling ||
+             opts.qualityCeiling > kMaxQualityCeiling)) {
+            error = L"quality ceiling must be 50-98 percent";
+            return false;
+        }
         return true;
     }
 

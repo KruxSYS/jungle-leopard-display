@@ -56,6 +56,82 @@ namespace jl {
     constexpr int    kPanelHeight = 480;
 
     // -----------------------------------------------------------------------
+    // Per-frame quality
+    //
+    // Calibration picks ONE -q:v for a whole file, set by its busiest frame, so
+    // every simple frame in that file is encoded far worse than it needed to be.
+    // A preprocessed pack has no reason to accept that: nothing about the panel
+    // requires two frames to have been encoded the same way, so the builder can
+    // give each frame the best quality it can afford under kSafeJpegBytes.
+    //
+    // The ceiling is what stops that being wasteful. Past it a frame is
+    // spending kilobytes on a difference nobody can see at 960x480, and pack
+    // size is the whole cost of this feature. Percent of the encoder's range;
+    // it is not a -q:v and does not map onto one.
+    //
+    // 84 is the default because it was measured, not guessed. On a 30 s clip
+    // whose worst keyframe calibrated to -q:v 3, against the source frames:
+    //
+    //     -q:v 3 (uniform)   32 MB   SSIM 0.911 - 0.954
+    //     ceiling 84         43 MB   SSIM 0.982 - 0.991   1.3 encodes/frame
+    //     ceiling 92         49 MB   SSIM 0.983 - 0.993   3.9 encodes/frame
+    //
+    // The step from uniform to 84 is the whole of the visible difference. The
+    // step from 84 to 92 costs 14% more disk and three times the encodes for
+    // the fourth decimal place, so it is offered and not taken by default.
+    // -----------------------------------------------------------------------
+
+    constexpr int kDefaultQualityCeiling = 84;
+    constexpr int kMinQualityCeiling = 50;
+    constexpr int kMaxQualityCeiling = 98;
+
+    // The other half of the per-frame question, and the one that actually
+    // decides whether the panel keeps up.
+    //
+    // kSafeJpegBytes is a per-frame MAXIMUM, not a rate. Calibration never had
+    // to think about the difference: -q:v stops at 3, which on this panel's
+    // 960x480 lands around 37 KB a frame, so the data rate came out at roughly
+    // 1.1 MB/s whatever the target said. Filling the 64 KB target on every
+    // frame instead pushes that past 1.4 MB/s, and the panel stutters.
+    //
+    // It is not the link. Measured on this hardware, writes flat out sustain
+    // 3.05 MB/s with no single frame's write blocking longer than 20 ms, so the
+    // host can push far more than the panel can draw. What runs out is the
+    // panel's own decode: a bigger JPEG takes its controller longer, and past
+    // some size per frame it stops finishing 30 of them a second.
+    //
+    // Nothing reports that. The panel applies no backpressure — it takes the
+    // bytes and falls behind quietly — so the host sees a clean 30 fps and zero
+    // drops while the picture visibly hitches. The only instrument is somebody
+    // looking at it, which is why this is a setting with a conservative default
+    // rather than something measured at runtime.
+    //
+    // So a per-frame build budgets BYTES PER SECOND and divides by the frame
+    // rate, and only then clamps to what one frame may be. The default is the
+    // rate the app has always run at and is known to work here.
+    constexpr uint32_t kDefaultByteRate = 1150u * 1024;   // per second
+    constexpr uint32_t kMinByteRate = 400u * 1024;
+    constexpr uint32_t kMaxByteRate = 4096u * 1024;
+
+    // What one frame may spend. The rate comes first and kSafeJpegBytes is only
+    // the ceiling on the answer.
+    //
+    // Inline and shared because the pack builder is no longer the only caller.
+    // The overlay compositor re-encodes every frame it draws on, so it has to
+    // answer to the same rate — it did not, and an overlay silently spent up to
+    // twice what the setting allowed. Anything that decides how big a frame may
+    // be must come through here, or the setting means nothing.
+    inline size_t FrameBudget(uint32_t byteRate, int fps)
+    {
+        if (byteRate == 0) byteRate = kDefaultByteRate;
+        if (byteRate < kMinByteRate) byteRate = kMinByteRate;
+        if (byteRate > kMaxByteRate) byteRate = kMaxByteRate;
+
+        const size_t perFrame = byteRate / (uint32_t)(fps > 0 ? fps : 30);
+        return perFrame < kSafeJpegBytes ? perFrame : kSafeJpegBytes;
+    }
+
+    // -----------------------------------------------------------------------
     // Logging
     //
     // Progress messages are transient: a console sink rewrites them in place on
@@ -91,6 +167,20 @@ namespace jl {
         int          quality = 0;       // 0 = calibrate automatically, else 2..31
         bool         loop = false;
         bool         recalibrate = false;   // ignore any cached calibration
+
+        // Per-frame quality, honoured by the pack builder only: streaming has
+        // one encoder setting for the whole run by construction. Ignored when
+        // `quality` pins a -q:v, because an explicit figure means the caller
+        // wants that figure everywhere.
+        bool         perFrameQuality = false;
+        int          qualityCeiling = 0;    // 0 = kDefaultQualityCeiling, else 50..98
+
+        // What the link and the panel behind it can swallow, in bytes per
+        // second. Divided by `fps` this becomes the per-frame byte target,
+        // which is what a per-frame build spends rather than the whole of
+        // kSafeJpegBytes. 0 = kDefaultByteRate.
+        uint32_t     byteRate = 0;
+
         std::wstring hwaccel;               // empty = software, "auto" = resolve
     };
 
@@ -109,6 +199,24 @@ namespace jl {
 
     // Return true to stop work at the next opportunity — checked per frame.
     using AbortFn = bool (*)(void* user);
+
+    // Handed the ffmpeg child's process handle as each pass starts, and nullptr
+    // as it ends.
+    //
+    // It exists because "checked per frame" is a promise the abort cannot keep
+    // on its own. The play loop spends nearly all its time blocked in ReadFile
+    // on ffmpeg's pipe, and a source that stops producing frames — a stalled
+    // network stream, a connection being refused — never reaches the next check
+    // at all. The abort is then invisible and the caller waits for as long as
+    // ffmpeg does.
+    //
+    // A host that holds this handle can end that wait by terminating the child:
+    // the pipe closes, ReadFile returns, and the loop unwinds normally. Anything
+    // that stops playback from a thread that must not block needs it.
+    //
+    // The handle is only valid until the next call hands over nullptr, so a
+    // holder must serialise its use against that.
+    using ChildFn = void (*)(void* processHandle, void* user);
 
     // -----------------------------------------------------------------------
     // Seeking
@@ -275,6 +383,30 @@ namespace jl {
         double fps = 0.0;
     };
 
+    // A live network source, for PlayVideo's last argument.
+    //
+    // What makes a stream different is not the transport, it is that none of
+    // the machinery built around files applies to it. There is no path to key a
+    // pack on, no second pass to survey for a quality, and no file to probe for
+    // a length — so all three arrive from the caller instead, already decided.
+    struct StreamSource {
+        // Extra ffmpeg input options, verbatim: -user_agent, -headers.
+        std::wstring inputArgs;
+
+        // The -q:v to use throughout. A stream cannot be calibrated — that
+        // costs a pass over the source, which here means downloading it twice —
+        // so the caller commits to one figure up front.
+        int quality = 3;
+
+        // How long the source runs, from wherever the caller knows it. 0 when
+        // it does not.
+        double duration = 0.0;
+
+        // Where to join, in seconds. Following something already playing is the
+        // normal case, so this is usually not 0.
+        double startAt = 0.0;
+    };
+
     // Streams MJPEG out of ffmpeg and pushes each frame, pacing against the
     // wall clock and holding live mode. Blocks until the source ends, `abort`
     // returns true, or the port dies. Leaves the device in live mode with a
@@ -290,7 +422,9 @@ namespace jl {
         PlaybackStats* stats,
         SeekFn takeSeek = nullptr, void* seekUser = nullptr,
         PositionFn onPosition = nullptr, void* positionUser = nullptr,
-        const Compositor* comp = nullptr);
+        const Compositor* comp = nullptr,
+        const StreamSource* stream = nullptr,
+        ChildFn onChild = nullptr, void* childUser = nullptr);
 
     // -----------------------------------------------------------------------
     // Preprocessing
@@ -391,8 +525,11 @@ namespace jl {
 
     // Produces a pack for `path`: loaded from the disk cache when `mode` is Disk
     // and a valid one is already there, otherwise built by running ffmpeg once
-    // to completion. Calibrates first when opts.quality is 0, exactly as
-    // playback would, so packed frames are byte-for-byte what streaming sends.
+    // to completion.
+    //
+    // With opts.perFrameQuality the frames are encoded here, one search per
+    // frame, and no calibration happens at all. Without it, calibration settles
+    // one -q:v first and packed frames are byte-for-byte what streaming sends.
     //
     // False means "fall back to streaming" — over the memory budget, ffmpeg
     // failed, or `abort` fired. Blocking, and building a long video takes a
@@ -455,6 +592,14 @@ namespace jl {
         void SetEnabled(bool on);
         bool Enabled() const;
 
+        // What one composed frame may spend, from FrameBudget(). Without this
+        // the compositor steers on the panel's 80 KB cap instead of the
+        // configured data rate and quietly spends up to twice what the setting
+        // allows — which is invisible from the host, because the panel takes
+        // every byte offered and just falls behind. Set it whenever an item
+        // starts; 0 restores the default-rate figure.
+        void SetBudget(size_t bytesPerFrame);
+
         // Replaces the surface, which must be exactly kPanelWidth x
         // kPanelHeight of premultiplied BGRA. Safe from any thread, and never
         // blocks the playback thread for longer than a pointer swap.
@@ -474,6 +619,13 @@ namespace jl {
             float    quality = 0.0f;  // the working quality, 0..1
             uint32_t reencodes = 0;     // frames that needed more than one encode
             uint32_t drops = 0;     // frames that would not fit at all
+
+            // The two that make a rate bug visible. Without them the only
+            // symptom of the compositor overspending is somebody noticing the
+            // panel hitch: it stays at 30 fps with no drops the whole time,
+            // because the panel never says it is behind.
+            double   outBytes = 0.0;   // rolling mean of the composed frame
+            uint32_t overBudget = 0;     // frames sent above the rate budget
         };
 
         Stats Snapshot() const;

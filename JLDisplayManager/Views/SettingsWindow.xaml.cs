@@ -8,6 +8,7 @@ using System.Windows.Media;
 
 using JLDisplayManager.Models;
 using JLDisplayManager.Services;
+using JLDisplayManager.Services.Music;
 
 using MessageBox = System.Windows.MessageBox;
 
@@ -17,6 +18,11 @@ public partial class SettingsWindow : Window
 {
     private static readonly string[] HwaccelValues =
         { "auto", "none", "cuda", "qsv", "d3d11va", "dxva2" };
+
+    // In the order the two music cache combos list them. 0 days means "no age
+    // limit", which is why it sits last rather than first.
+    private static readonly int[] MusicDaysValues = { 3, 7, 14, 30, 90, 0 };
+    private static readonly int[] MusicCacheValues = { 512, 1024, 2048, 4096, 8192, 16384 };
 
     /// <summary>
     /// The dark ink the other combo boxes set inline in XAML. Items built in
@@ -55,6 +61,8 @@ public partial class SettingsWindow : Window
         HwaccelBox.SelectedIndex = hw >= 0 ? hw : 0;
 
         PreprocessBox.SelectedIndex = (int)s.Preprocess;
+        PerFrameBox.IsChecked = s.PerFrameQuality;
+        SelectByteRate(s.ByteRateKBs);
         ShowPreprocessHint();
 
         // Read the real registered state rather than the stored flag: the task
@@ -78,6 +86,14 @@ public partial class SettingsWindow : Window
 
         LhmBox.IsChecked = s.UseLibreHardwareMonitor;
         HwInfoBox.IsChecked = s.UseHwInfo;
+
+        MediaSessionBox.IsChecked = s.UseMediaSession;
+        MusicVideoBox.IsChecked = s.MusicVideo;
+        FillMediaApps(s.MediaSessionApp);
+
+        MusicDaysCombo.SelectedIndex = NearestIndex(MusicDaysValues, s.MusicCacheDays);
+        MusicCacheCombo.SelectedIndex = NearestIndex(MusicCacheValues, s.MusicCacheMB);
+        ShowMusicCacheSize();
 
         ShowSensorState();
         ShowDeviceInfo();
@@ -129,10 +145,28 @@ public partial class SettingsWindow : Window
 
     /// <summary>
     /// Roughly what a megabyte of preprocessed frames is worth in playing time.
-    /// A 960x480 frame lands around 40 KB, so 30 fps costs about 70 MB a minute
-    /// — close enough to make a limit mean something before you pick it.
+    /// At one quality for the whole file a 960x480 frame lands around 40 KB, so
+    /// 30 fps costs about 70 MB a minute. A per-frame build spends exactly the
+    /// data rate it was given, which makes the same figure arithmetic rather
+    /// than an estimate.
     /// </summary>
-    private const double MegabytesPerVideoMinute = 70.0;
+    private double MegabytesPerVideoMinute =>
+        _app.Settings.PerFrameQuality
+            ? _app.Settings.ByteRateKBs * 60.0 / 1024.0
+            : 70.0;
+
+    /// <summary>
+    /// The data rates offered, in KB/s. 1150 is what one -q:v 3 frame a 30th of
+    /// a second comes to, which is what the app has always sent.
+    /// <para>
+    /// The two below it exist because 1150 is not a floor, only a default: it
+    /// was measured on one panel with one kind of content, and dense footage —
+    /// foliage, gravel, anything without a flat region — is what makes a panel's
+    /// decoder run out. There is nowhere to go but down when that happens, so
+    /// there has to be a down.
+    /// </para>
+    /// </summary>
+    private static readonly int[] ByteRateValues = { 700, 900, 1150, 1400, 1900 };
 
     private static readonly int[] MemoryPresetsMB = { 128, 256, 512, 1024, 2048, 4096 };
 
@@ -145,7 +179,7 @@ public partial class SettingsWindow : Window
     private static string FormatSize(int megabytes) =>
         megabytes >= 1024 ? $"{megabytes / 1024} GB" : $"{megabytes} MB";
 
-    private static string PlayingTime(int megabytes)
+    private string PlayingTime(int megabytes)
     {
         double minutes = megabytes / MegabytesPerVideoMinute;
         if (minutes < 1) return "under a minute";
@@ -217,6 +251,16 @@ public partial class SettingsWindow : Window
 
         PopulateBudgets(mode);
 
+        bool preparing = mode != PreprocessMode.Off;
+        bool perFrame = preparing && _app.Settings.PerFrameQuality;
+
+        // Per-frame quality is a property of prepared frames, so it has nothing
+        // to say while nothing is being prepared.
+        PerFrameBox.Visibility = preparing ? Visibility.Visible : Visibility.Collapsed;
+        ByteRateRow.Visibility = perFrame ? Visibility.Visible : Visibility.Collapsed;
+
+        int mbPerMinute = (int)MegabytesPerVideoMinute;
+
         PreprocessHint.Text = mode switch
         {
             PreprocessMode.Memory =>
@@ -225,12 +269,23 @@ public partial class SettingsWindow : Window
                 "falls back to streaming on its own, so raising it only widens what " +
                 "benefits — it never decides what will play.",
             PreprocessMode.Disk =>
-                "ffmpeg runs once per item, ever. Roughly 70 MB per minute of video, " +
-                "evicted least-recently-used once the limit is reached. Changing rotation, " +
-                "stretch or frame rate rebuilds them.",
+                $"ffmpeg runs once per item, ever. Roughly {mbPerMinute} MB per minute of " +
+                "video, evicted least-recently-used once the limit is reached. Changing " +
+                "rotation, stretch or frame rate rebuilds them.",
             _ =>
                 "ffmpeg runs for as long as something is on the panel.",
         };
+
+        if (perFrame)
+        {
+            PreprocessHint.Text +=
+                " Each frame is encoded at the best quality that fits the data rate " +
+                "below, rather than at the one setting the busiest frame in the whole " +
+                "file allows. At the default that is the same rate the panel has " +
+                "always been sent, for a visibly better picture; raising it is what " +
+                "makes playback stutter. Items already prepared keep what they were " +
+                "built with until they are built again.";
+        }
 
         PackCachePanel.Visibility = mode == PreprocessMode.Disk
             ? Visibility.Visible
@@ -258,6 +313,37 @@ public partial class SettingsWindow : Window
         // behaviour the session is not yet in otherwise.
         _app.Settings.Preprocess = (PreprocessMode)Math.Max(0, PreprocessBox.SelectedIndex);
         _app.Display.ApplyPreprocess();
+        ShowPreprocessHint();
+    }
+
+    private void SelectByteRate(int kbs)
+    {
+        int index = Array.IndexOf(ByteRateValues, kbs);
+        if (index < 0) index = 0;
+        ByteRateBox.SelectedIndex = index;
+    }
+
+    private void OnPerFrameChanged(object sender, RoutedEventArgs e)
+    {
+        if (!_loaded) return;
+
+        _app.Settings.PerFrameQuality = PerFrameBox.IsChecked == true;
+
+        // Nothing is pushed down here: it rides on JlRenderOpts with the next
+        // item rather than on the session. What does need saying is that the
+        // packs already on disk were built the other way and stay that way
+        // until they are rebuilt — which ShowPreprocessHint covers.
+        ShowPreprocessHint();
+    }
+
+    private void OnByteRateChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loaded) return;
+
+        int index = ByteRateBox.SelectedIndex;
+        if (index < 0 || index >= ByteRateValues.Length) return;
+
+        _app.Settings.ByteRateKBs = ByteRateValues[index];
         ShowPreprocessHint();
     }
 
@@ -334,6 +420,140 @@ public partial class SettingsWindow : Window
         _app.Settings.UseLibreHardwareMonitor = LhmBox.IsChecked == true;
         _app.Settings.UseHwInfo = HwInfoBox.IsChecked == true;
         ShowSensorState();
+    }
+
+    // -----------------------------------------------------------------------
+    // Music
+    // -----------------------------------------------------------------------
+
+    private void OnMusicChanged(object sender, RoutedEventArgs e)
+    {
+        if (!_loaded) return;
+
+        _app.Settings.UseMediaSession = MediaSessionBox.IsChecked == true;
+        _app.Settings.MusicVideo = MusicVideoBox.IsChecked == true;
+    }
+
+    private void OnMusicCacheSettingChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loaded) return;
+
+        if (MusicDaysCombo.SelectedIndex >= 0)
+            _app.Settings.MusicCacheDays = MusicDaysValues[MusicDaysCombo.SelectedIndex];
+
+        if (MusicCacheCombo.SelectedIndex >= 0)
+            _app.Settings.MusicCacheMB = MusicCacheValues[MusicCacheCombo.SelectedIndex];
+
+        // Pushed down straight away so "Sweep now" uses what is on screen
+        // rather than what was set when the follower last started.
+        MusicVideoCache.Configure(_app.Settings.MusicCacheMB, _app.Settings.MusicCacheDays);
+        ShowMusicCacheSize();
+    }
+
+    private void OnClearMusicCache(object sender, RoutedEventArgs e)
+    {
+        MusicVideoCache.Clear();
+        ShowMusicCacheSize();
+    }
+
+    private void OnSweepMusicCache(object sender, RoutedEventArgs e)
+    {
+        MusicVideoCache.Configure(_app.Settings.MusicCacheMB, _app.Settings.MusicCacheDays);
+        MusicVideoCache.Sweep();
+        ShowMusicCacheSize();
+    }
+
+    private void ShowMusicCacheSize()
+    {
+        long bytes = MusicVideoCache.Bytes();
+        string used = bytes < 1024L * 1024
+            ? "empty"
+            : $"{bytes / (1024.0 * 1024):0} MB";
+
+        int days = _app.Settings.MusicCacheDays;
+        string kept = days == 0 ? "no age limit" : days == 1 ? "1 day" : $"{days} days";
+
+        MusicCacheText.Text =
+            $"Downloaded videos: {used} of {FormatSize(_app.Settings.MusicCacheMB)}, {kept}";
+    }
+
+    /// <summary>
+    /// The listed value closest to a saved one, so a figure hand-edited into
+    /// settings.json still selects something sensible instead of nothing.
+    /// </summary>
+    private static int NearestIndex(int[] values, int value)
+    {
+        int best = 0;
+        for (int i = 1; i < values.Length; i++)
+        {
+            // 0 means "no limit" and is never nearest to a real figure; it is
+            // only chosen when the saved value is 0 too.
+            if (values[i] == 0) continue;
+            if (value == 0) return Array.IndexOf(values, 0);
+
+            if (Math.Abs(values[i] - value) < Math.Abs(values[best] - value)) best = i;
+        }
+
+        return value == 0 ? Array.IndexOf(values, 0) : best;
+    }
+
+    private void OnMediaAppChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_loaded) return;
+        if (MediaAppCombo.SelectedItem is not ComboBoxItem item) return;
+
+        _app.Settings.MediaSessionApp = item.Tag as string ?? "";
+        _app.Music?.Repoint();
+    }
+
+    /// <summary>
+    /// Lists the players Windows currently knows about.
+    ///
+    /// By app id, because that is the identity the follower matches on, and it
+    /// is frequently not a name anybody would recognise — Firefox reports
+    /// itself as "308046B0AF4A39CB". The friendly name is what gets shown; the
+    /// id rides along as the tag. A player that is saved but not running right
+    /// now is listed too, or picking it would silently reset to automatic.
+    /// </summary>
+    private void FillMediaApps(string saved)
+    {
+        MediaAppCombo.Items.Clear();
+        MediaAppCombo.Items.Add(Entry("Automatic", ""));
+
+        var seen = new List<string>();
+        foreach (string app in MediaSession.Sessions())
+        {
+            if (string.IsNullOrWhiteSpace(app) || seen.Contains(app)) continue;
+            seen.Add(app);
+            MediaAppCombo.Items.Add(Entry(MediaSession.FriendlyName(app), app));
+        }
+
+        if (saved.Length > 0 && !seen.Contains(saved))
+            MediaAppCombo.Items.Add(Entry(MediaSession.FriendlyName(saved) + " (not running)", saved));
+
+        foreach (object o in MediaAppCombo.Items)
+        {
+            if (o is ComboBoxItem c && (c.Tag as string ?? "") == saved)
+            {
+                MediaAppCombo.SelectedItem = c;
+                break;
+            }
+        }
+
+        MediaAppCombo.SelectedItem ??= MediaAppCombo.Items[0];
+
+        // The same trick the rest of the combos use: an item's generated
+        // TextBlock picks up the app's implicit style and renders invisible, so
+        // the content is an explicit TextBlock with its own foreground.
+        static ComboBoxItem Entry(string text, string tag) => new()
+        {
+            Content = new TextBlock
+            {
+                Text = text,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x12, 0x07)),
+            },
+            Tag = tag,
+        };
     }
 
     /// <summary>
@@ -425,6 +645,14 @@ public partial class SettingsWindow : Window
 
         s.UseLibreHardwareMonitor = LhmBox.IsChecked == true;
         s.UseHwInfo = HwInfoBox.IsChecked == true;
+
+        s.UseMediaSession = MediaSessionBox.IsChecked == true;
+        s.MusicVideo = MusicVideoBox.IsChecked == true;
+        if (MusicDaysCombo.SelectedIndex >= 0)
+            s.MusicCacheDays = MusicDaysValues[MusicDaysCombo.SelectedIndex];
+        if (MusicCacheCombo.SelectedIndex >= 0)
+            s.MusicCacheMB = MusicCacheValues[MusicCacheCombo.SelectedIndex];
+        if (MediaAppCombo.SelectedItem is ComboBoxItem app) s.MediaSessionApp = app.Tag as string ?? "";
 
         Storage.SaveSettings(s);
     }

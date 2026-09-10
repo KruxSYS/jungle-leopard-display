@@ -370,6 +370,22 @@
                                TextWrapping="Wrap" MaxHeight="48"
                                Visibility="Collapsed"/>
 
+                    <!-- While following: what is playing, and what the follower
+                         decided to do about it. The second line is the whole
+                         diagnostic surface for the feature — "it's showing the
+                         wrong video" is unanswerable without it. -->
+                    <Border x:Name="MusicPanel" Margin="0,8,0,0" Padding="8,6"
+                            CornerRadius="4" Background="#14FFFFFF"
+                            Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock x:Name="MusicSummary" FontSize="12"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <TextBlock x:Name="MusicDetail" Margin="0,2,0,0" FontSize="11"
+                                       Foreground="{StaticResource TextDim}"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </Border>
+
                     <Grid Margin="0,10,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
@@ -392,6 +408,12 @@
 
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                         <Button Content="Stop" Style="{StaticResource Btn}" Click="OnStop"/>
+                        <!-- Following was reachable only from the tray, which is
+                             easy to miss — and every Stop turns it off, so there
+                             has to be an obvious way back on. -->
+                        <Button x:Name="FollowMusicButton" Content="Follow music"
+                                Style="{StaticResource Btn}" Margin="8,0,0,0"
+                                Click="OnToggleFollowMusic"/>
                         <Button x:Name="ReconnectButton" Content="Reconnect" Style="{StaticResource Btn}"
                                 Margin="8,0,0,0" Click="OnReconnect"/>
                     </StackPanel>

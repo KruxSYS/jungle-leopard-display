@@ -96,6 +96,10 @@ public static class OverlaySystemPrompt
         sb.AppendLine("            bottom-right");
         sb.AppendLine("  size      small | medium | large");
         sb.AppendLine("  label     a short caption such as \"CPU\" or \"GPU\"");
+        sb.AppendLine("  template  for kind \"text\" (or the middle of a gauge): the");
+        sb.AppendLine("            exact text, with {sensor.id} for a live value, e.g.");
+        sb.AppendLine("            \"GPU {gpu.load:0}%  {gpu.temp:0}°C\". Leave out for");
+        sb.AppendLine("            the default \"LABEL value\".");
         sb.AppendLine("  icon      for kind \"icon\": a name from the icon list");
         sb.AppendLine("  accent    neutral | good | cool | warm | hot | dim");
         sb.AppendLine("  group     a name; layers sharing one are laid out together");
@@ -258,7 +262,10 @@ public static class OverlaySystemPrompt
         sb.AppendLine("  - Leave accent out unless a colour was asked for; loads and "
                       + "temperatures are automatically coloured green through red.");
         sb.AppendLine("  - Leave style out unless a look was asked for. The theme already "
-                      + "keeps things consistent.");
+                       + "keeps things consistent.");
+        sb.AppendLine("  - Leave template out unless a specific text was asked for; the "
+                       + "default readout is usually right. In a template, use only sensor "
+                       + "ids from the list — an unknown one draws --.");
         sb.AppendLine("  - An icon beside a readout reads far better than a readout alone, "
                       + "so pair them when there is room.");
         sb.AppendLine(FormattableString.Invariant($"  - At most {MaxLayers} layers."));
@@ -266,9 +273,9 @@ public static class OverlaySystemPrompt
     }
 
     /// <summary>
-    /// The three shapes of request this feature exists for, each with the answer
-    /// it should get. Worth the tokens: examples pin down the output format far
-    /// more reliably than describing it does, especially for small models.
+    /// Representative requests, each with the answer it should get. Worth the
+    /// tokens: examples pin down the output format far more reliably than
+    /// describing it does, especially for small models.
     /// </summary>
     private static void AppendExamples(StringBuilder sb)
     {
@@ -278,7 +285,14 @@ public static class OverlaySystemPrompt
         sb.AppendLine("\"Add a clock at the center\"");
         sb.AppendLine("{\"intent\":\"add\",\"note\":\"Clock in the middle\",\"layers\":[");
         sb.AppendLine("  {\"kind\":\"text\",\"sensor\":\"time.short\",\"anchor\":\"center\","
-                      + "\"size\":\"large\"}]}");
+                       + "\"size\":\"large\"}]}");
+        sb.AppendLine();
+
+        sb.AppendLine("\"Show GPU load and temperature on one line at the top\"");
+        sb.AppendLine("{\"intent\":\"add\",\"note\":\"GPU load and temperature, top centre\","
+                       + "\"layers\":[");
+        sb.AppendLine("  {\"kind\":\"text\",\"sensor\":\"gpu.load\",\"anchor\":\"top-centre\","
+                       + "\"template\":\"GPU {gpu.load:0}%  {gpu.temp:0}°C\"}]}");
         sb.AppendLine();
 
         sb.AppendLine("\"Add GPU usage bottom left\"");
