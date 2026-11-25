@@ -485,7 +485,7 @@ public static class Storage
 
     public static void SaveAi(AiSettings a) => Save(AiPath, a);
 
-    private static T? Load<T>(string path) where T : class
+    internal static T? Load<T>(string path) where T : class
     {
         try
         {
@@ -528,7 +528,7 @@ public static class Storage
         }
     }
 
-    private static void Save<T>(string path, T value)
+    internal static void Save<T>(string path, T value)
     {
         try
         {

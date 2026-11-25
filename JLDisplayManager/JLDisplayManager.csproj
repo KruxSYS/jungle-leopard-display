@@ -68,6 +68,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Pure logic (storage, playlist order, process arguments) is internal and
+         tested from JLDisplayManager.Tests. -->
+    <InternalsVisibleTo Include="JLDisplayManager.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Also a WPF resource: the tray loads its 16 px frame from it
          (App.LoadIcon), and the About card shows the mark. -->
     <Resource Include="app.ico"/>

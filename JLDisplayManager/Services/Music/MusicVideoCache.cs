@@ -135,6 +135,30 @@ public static class MusicVideoCache
         }
     }
 
+    /// <summary>yt-dlp's arguments for fetching one video to <paramref name="path"/>.</summary>
+    internal static List<string> DownloadArgs(string videoId, string path) => new()
+    {
+        "-f", FormatSelector,
+
+        // A fixed name rather than a title template: the id is the cache
+        // key, and a title would make the same video land under two names
+        // when YouTube renames it.
+        "-o", path,
+
+        "--no-playlist",
+        "--no-mtime",
+        "--no-warnings",
+        "--newline",
+        "--no-color",
+
+        // The id last, after "--". YouTube ids may begin with '-' (about
+        // one in 64 do), and as a leading argument yt-dlp parsed those as
+        // an option and failed, so that song's video could never be
+        // fetched. "--" ends option parsing; everything after it is a URL.
+        "--",
+        videoId,
+    };
+
     private static string? Download(YtDlp ytdlp, string videoId, Action<double>? onProgress,
                                     CancellationToken token)
     {
@@ -142,28 +166,7 @@ public static class MusicVideoCache
 
         string path = PathFor(videoId);
 
-        var args = new List<string>
-        {
-            "-f", FormatSelector,
-
-            // A fixed name rather than a title template: the id is the cache
-            // key, and a title would make the same video land under two names
-            // when YouTube renames it.
-            "-o", path,
-
-            "--no-playlist",
-            "--no-mtime",
-            "--no-warnings",
-            "--newline",
-            "--no-color",
-
-            // The id last, after "--". YouTube ids may begin with '-' (about
-            // one in 64 do), and as a leading argument yt-dlp parsed those as
-            // an option and failed, so that song's video could never be
-            // fetched. "--" ends option parsing; everything after it is a URL.
-            "--",
-            videoId,
-        };
+        List<string> args = DownloadArgs(videoId, path);
 
         var progress = new System.Text.RegularExpressions.Regex(@"\[download\]\s+([\d.]+)%");
         string lastError = "";

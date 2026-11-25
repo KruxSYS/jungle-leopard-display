@@ -127,21 +127,28 @@ public sealed class PlaylistPlayer : INotifyPropertyChanged
         PlayCurrent();
     }
 
-    private List<MediaItem> BuildOrder()
-    {
-        var byId = _library.Items.ToDictionary(i => i.Id);
+    private List<MediaItem> BuildOrder() => BuildOrder(_library, _random);
 
-        var items = _library.Playlist
+    /// <summary>
+    /// The order a playlist plays in: the playlist's ids, resolved against the
+    /// library, skipping anything removed or no longer on disk, shuffled if the
+    /// library says so. Static and given its Random so it can be tested.
+    /// </summary>
+    internal static List<MediaItem> BuildOrder(AppLibrary library, Random random)
+    {
+        var byId = library.Items.ToDictionary(i => i.Id);
+
+        var items = library.Playlist
             .Where(byId.ContainsKey)
             .Select(id => byId[id])
             .Where(i => i.FileExists)
             .ToList();
 
-        if (_library.Shuffle)
+        if (library.Shuffle)
         {
             for (int i = items.Count - 1; i > 0; i--)
             {
-                int j = _random.Next(i + 1);
+                int j = random.Next(i + 1);
                 (items[i], items[j]) = (items[j], items[i]);
             }
         }
