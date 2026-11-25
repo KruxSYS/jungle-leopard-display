@@ -19,3 +19,6 @@
 *.lib binary
 *.exe binary
 *.pdb binary
+*.rc        text eol=crlf
+*.iss       text eol=crlf
+*.bmp binary

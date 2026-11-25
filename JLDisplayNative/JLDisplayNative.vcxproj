@@ -67,6 +67,9 @@
            to the drop. -->
       <AdditionalDependencies>Setupapi.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>$(SolutionDir)JLDisplayCore;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
@@ -87,6 +90,9 @@
       <!-- Overrides the unconditional Link group above; no .pdb is emitted. -->
       <GenerateDebugInformation>false</GenerateDebugInformation>
     </Link>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>$(SolutionDir)JLDisplayCore;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="jl_api.h" />
@@ -99,6 +105,9 @@
     <ProjectReference Include="..\JLDisplayCore\JLDisplayCore.vcxproj">
       <Project>{2a7f1e44-3c55-4b21-9e8d-1f0a6c3b7d01}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="JLDisplayNative.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
