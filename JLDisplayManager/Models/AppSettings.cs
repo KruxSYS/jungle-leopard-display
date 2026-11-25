@@ -538,16 +538,39 @@ public static class Storage
         }
     }
 
+    /// <summary>
+    /// Past this the log is rolled to manager.log.1 (one generation kept), so
+    /// it stays readable and a tray app that runs for years cannot fill a disk
+    /// with it. The follower alone writes a few lines per track.
+    /// </summary>
+    internal const long LogRollBytes = 2 * 1024 * 1024;
+
+    private static readonly object LogLock = new();
+
     public static void Log(string message)
     {
-        try
+        // Serialised: this is called from the UI thread, pool threads and the
+        // pack build at once, and two appends racing for the file used to lose
+        // one of the lines to a sharing violation, silently.
+        lock (LogLock)
         {
-            EnsureDirectories();
-            File.AppendAllText(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  {message}{Environment.NewLine}");
+            try
+            {
+                EnsureDirectories();
+                RollIfLarge(LogPath, LogRollBytes);
+                File.AppendAllText(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}  {message}{Environment.NewLine}");
+            }
+            catch
+            {
+                // Logging must never be the thing that breaks the app.
+            }
         }
-        catch
-        {
-            // Logging must never be the thing that breaks the app.
-        }
+    }
+
+    internal static void RollIfLarge(string path, long limit)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists || info.Length < limit) return;
+        File.Move(path, path + ".1", overwrite: true);
     }
 }
