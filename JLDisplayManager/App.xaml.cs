@@ -108,6 +108,7 @@ public partial class App : Application
             _showEvent, (_, _) => Dispatcher.Invoke(ShowWindow), null, -1, false);
 
         Storage.EnsureDirectories();
+        bool firstRun = !Storage.HasSettings;
         Settings = Storage.LoadSettings();
         Library = Storage.LoadLibrary();
         Ai = Storage.LoadAi();
@@ -159,7 +160,11 @@ public partial class App : Application
         BuildTray();
         WarnIfFfmpegMissing();
 
-        bool startHidden = Settings.StartMinimised
+        // "Start hidden" defaults to on, which is right for the logon task and
+        // wrong for the very first launch after installing: the window never
+        // appears, the icon lands in the tray's overflow on Windows 11, and the
+        // app looks like it did not start. A first run always shows itself.
+        bool startHidden = (Settings.StartMinimised && !firstRun)
             || Array.Exists(e.Args, a => a.Equals("--startup", StringComparison.OrdinalIgnoreCase));
 
         _window = new MainWindow();

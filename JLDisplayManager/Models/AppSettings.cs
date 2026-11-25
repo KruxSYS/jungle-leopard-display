@@ -429,6 +429,13 @@ public static class Storage
         System.IO.Directory.CreateDirectory(MusicVideoDirectory);
     }
 
+    /// <summary>
+    /// Whether settings have ever been saved here. False on the first run of a
+    /// fresh install, which is the one start where hiding in the tray is wrong:
+    /// nobody knows to look there yet.
+    /// </summary>
+    public static bool HasSettings => File.Exists(SettingsPath);
+
     public static AppSettings LoadSettings() => Load<AppSettings>(SettingsPath) ?? new AppSettings();
 
     public static AppLibrary LoadLibrary() => Load<AppLibrary>(LibraryPath) ?? new AppLibrary();
