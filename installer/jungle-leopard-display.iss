@@ -128,8 +128,8 @@ begin
   end;
 end;
 
-{ ffmpeg: winget's links folder, or anywhere on PATH. (Not {app}: this runs
-  before the install folder is chosen, and {app} cannot be expanded yet.) }
+// ffmpeg: winget's links folder, or anywhere on PATH. Not the install folder:
+// this runs before it is chosen, so the app constant cannot be expanded yet.
 function FfmpegPresent: Boolean;
 var
   Path, Dir: String;
