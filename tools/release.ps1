@@ -38,6 +38,12 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Sln = Join-Path $Root 'Jungle Leopard Display.sln'
 $Dist = Join-Path $Root 'dist'
 
+function Find-Exe($name) {
+    $c = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c) { return $c.Source }
+    return $null
+}
+
 function Step($text) { Write-Host "`n== $text" -ForegroundColor Cyan }
 function Fail($text) { Write-Host "release: $text" -ForegroundColor Red; exit 1 }
 
@@ -62,13 +68,16 @@ Step 'Tools'
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path $vswhere)) { Fail 'vswhere.exe not found - install Visual Studio 2022' }
-$vs = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-if (-not $vs) { Fail 'no Visual Studio with MSBuild found' }
+# Visual Studio 2022 specifically (the v143 toolset the projects name), even
+# when a newer Visual Studio is installed beside it.
+$vs = & $vswhere -latest -products * -version '[17.0,18.0)' `
+    -requires Microsoft.Component.MSBuild -property installationPath | Select-Object -First 1
+if (-not $vs) { Fail 'no Visual Studio 2022 with MSBuild found' }
 $MSBuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
 if (-not (Test-Path $MSBuild)) { Fail "MSBuild not at $MSBuild" }
 Write-Host "msbuild  $MSBuild"
 
-$Dotnet = (Get-Command dotnet.exe -ErrorAction SilentlyContinue).Source
+$Dotnet = Find-Exe 'dotnet.exe'
 if (-not $Dotnet) {
     $candidate = Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
     if (Test-Path $candidate) { $Dotnet = $candidate; $env:PATH = (Split-Path $candidate) + ';' + $env:PATH }
@@ -76,7 +85,7 @@ if (-not $Dotnet) {
 if (-not $Dotnet) { Fail 'dotnet.exe not found - install the .NET 9 SDK' }
 Write-Host "dotnet   $Dotnet"
 
-$Iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+$Iscc = Find-Exe 'ISCC.exe'
 if (-not $Iscc) {
     foreach ($c in @((Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),
                      (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
