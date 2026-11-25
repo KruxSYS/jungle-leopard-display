@@ -30,6 +30,10 @@
 
 #include "jl_core.h"
 
+#include <windows.h>
+#include <shellapi.h>   // CommandLineToArgvW
+#pragma comment(lib, "shell32.lib")
+
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -73,18 +77,45 @@ static std::atomic<bool> g_running(true);
 static BOOL WINAPI CtrlHandler(DWORD) { g_running = false; return TRUE; }
 static bool ShouldAbort(void*) { return !g_running; }
 
-static std::wstring Widen(const char* s)
+// The command line as Windows actually holds it: UTF-16.
+//
+// main's argv is the same text converted to the ANSI code page, which cannot
+// carry most of Unicode, and this used to decode it as UTF-8 besides - so a
+// path like "Música.mp4" or any Cyrillic or CJK file name arrived as
+// replacement characters and could not be opened. Option names are ASCII and
+// still compared through argv; anything that is a path, port or name comes
+// from here.
+static std::vector<std::wstring> WideArgs()
 {
-    if (!s || !*s) return L"";
-    int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
+    std::vector<std::wstring> out;
+    int n = 0;
+    if (LPWSTR* w = CommandLineToArgvW(GetCommandLineW(), &n)) {
+        for (int i = 0; i < n; ++i) out.emplace_back(w[i]);
+        LocalFree(w);
+    }
+    return out;
+}
+
+static std::vector<std::wstring> g_wargs;
+
+static std::wstring Widen(int i, const char* fallback)
+{
+    if (i >= 0 && (size_t)i < g_wargs.size()) return g_wargs[(size_t)i];
+
+    // CommandLineToArgvW and the CRT split a command line the same way, so this
+    // only runs if they somehow disagreed on the count. Best effort: ANSI.
+    if (!fallback || !*fallback) return L"";
+    int n = MultiByteToWideChar(CP_ACP, 0, fallback, -1, nullptr, 0);
     std::wstring w(n ? n - 1 : 0, 0);
-    if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s, -1, &w[0], n);
+    if (n > 1) MultiByteToWideChar(CP_ACP, 0, fallback, -1, &w[0], n);
     return w;
 }
 
 int main(int argc, char** argv)
 {
     jl::SetLogSink(ConsoleLog, nullptr);
+    g_wargs = WideArgs();
+    if ((int)g_wargs.size() != argc) g_wargs.clear();   // disagree: use argv for all
 
     jl::RenderOpts opts;
     std::wstring port;
@@ -112,9 +143,9 @@ int main(int argc, char** argv)
         }
         else if (a == "--clear-cache") clearCache = true;
         else if (a == "--limit" && i + 1 < argc) limitMB = atoll(argv[++i]);
-        else if (a == "--hwaccel" && i + 1 < argc) opts.hwaccel = Widen(argv[++i]);
-        else if (a == "--image" && i + 1 < argc) imagePath = Widen(argv[++i]);
-        else if (a == "--video" && i + 1 < argc) videoPath = Widen(argv[++i]);
+        else if (a == "--hwaccel" && i + 1 < argc) opts.hwaccel = (++i, Widen(i, argv[i]));
+        else if (a == "--image" && i + 1 < argc) imagePath = (++i, Widen(i, argv[i]));
+        else if (a == "--video" && i + 1 < argc) videoPath = (++i, Widen(i, argv[i]));
         else if (a == "--light" && i + 1 < argc) light = atoi(argv[++i]);
         else if (a == "--rotate" && i + 1 < argc) opts.rotate = atoi(argv[++i]);
         else if (a == "--fps" && i + 1 < argc) opts.fps = atoi(argv[++i]);
@@ -128,7 +159,7 @@ int main(int argc, char** argv)
             opts.perFrameQuality = true;
             opts.byteRate = (uint32_t)(atoi(argv[++i]) * 1024);   // KB/s on the command line
         }
-        else if (a == "--port" && i + 1 < argc) port = Widen(argv[++i]);
+        else if (a == "--port" && i + 1 < argc) port = (++i, Widen(i, argv[i]));
     }
 
     // Streaming commits to one quality before it has seen the frames, so
