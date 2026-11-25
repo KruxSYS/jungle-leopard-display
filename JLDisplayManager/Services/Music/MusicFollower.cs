@@ -759,10 +759,12 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
 
         MusicPrepare.Begin("Preparing video");
 
-        Task.Run(() =>
+        // A thread of its own rather than Task.Run. Lowering the priority of a
+        // pool thread lowers it for every job that thread runs afterwards - and
+        // the sensor timer runs on the pool - and a build parks a pool thread
+        // for a minute besides. Background, so it never holds the app open.
+        var worker = new Thread(() =>
         {
-            Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
-
             bool ok = false;
             DateTime began = DateTime.UtcNow;
 
@@ -782,7 +784,13 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
 
             TimeSpan took = DateTime.UtcNow - began;
             _dispatcher.BeginInvoke(() => OnPacked(file, videoSeconds, version, ok, took));
-        });
+        })
+        {
+            IsBackground = true,
+            Priority = ThreadPriority.BelowNormal,
+            Name = "music pack build",
+        };
+        worker.Start();
     }
 
     /// <summary>
