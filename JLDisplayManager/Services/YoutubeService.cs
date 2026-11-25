@@ -334,6 +334,9 @@ public static class YoutubeService
         args.Add("after_move:%(filepath)s");
         args.Add(pathFile);
 
+        // After "--", so a URL that begins with '-' is a URL and never an
+        // option (yt-dlp has --exec).
+        args.Add("--");
         args.Add(url);
 
         var complaints = new List<string>();

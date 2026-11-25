@@ -81,6 +81,10 @@ public static class MusicVideoCache
     public static double Progress => Volatile.Read(ref _fetchPercent);
 
     /// <summary>The file for a video id, whether or not it exists yet.</summary>
+    /// <summary>Whether this is the shape of a YouTube video id: 11 of [A-Za-z0-9_-].</summary>
+    public static bool IsVideoId(string? id) =>
+        id is { Length: 11 } && id.All(c => char.IsAsciiLetterOrDigit(c) || c == '_' || c == '-');
+
     public static string PathFor(string videoId) =>
         Path.Combine(Storage.MusicVideoDirectory, videoId + ".mp4");
 
@@ -106,7 +110,10 @@ public static class MusicVideoCache
     public static string? Ensure(string videoId, Action<double>? onProgress = null,
                                  CancellationToken token = default)
     {
-        if (string.IsNullOrWhiteSpace(videoId)) return null;
+        // The id names a file (PathFor) and is handed to yt-dlp, and it comes
+        // from parsing yt-dlp's own search output. Anything that is not the
+        // shape of a YouTube id is refused rather than trusted with either.
+        if (!IsVideoId(videoId)) return null;
 
         if (Existing(videoId) is { } cached) return cached;
 
@@ -137,7 +144,6 @@ public static class MusicVideoCache
 
         var args = new List<string>
         {
-            videoId,
             "-f", FormatSelector,
 
             // A fixed name rather than a title template: the id is the cache
@@ -150,6 +156,13 @@ public static class MusicVideoCache
             "--no-warnings",
             "--newline",
             "--no-color",
+
+            // The id last, after "--". YouTube ids may begin with '-' (about
+            // one in 64 do), and as a leading argument yt-dlp parsed those as
+            // an option and failed, so that song's video could never be
+            // fetched. "--" ends option parsing; everything after it is a URL.
+            "--",
+            videoId,
         };
 
         var progress = new System.Text.RegularExpressions.Regex(@"\[download\]\s+([\d.]+)%");
