@@ -41,7 +41,7 @@ marked **needs hardware verification**.
 | Critical | 0 | 0 | 0 |
 | High | 3 | 3 | 0 |
 | Medium | 9 | 9 | 0 |
-| Low | 12 | 0 | 12 |
+| Low | 13 | 0 | 13 |
 
 ## Findings
 
@@ -167,6 +167,7 @@ and is unaffected. *Verification:* on the VM.
 | L10 | `JLDisplayCore/jl_calibrate.cpp:231` | performance | `jl_calibrate` with "auto" launches `ffmpeg -hwaccels` on every call rather than using the session's resolved value. |
 | L11 | `JLDisplayCore/jl_ffmpeg.cpp:90` | UX (CLI) | ffmpeg inherits the console's stdin, so keys typed into the CLI's console can reach it. Unchanged behaviour, kept so the CLI's existing use is not altered. |
 | L12 | `JLDisplayManager/Services/Music/MusicFollower.cs:698` | performance | With per-frame quality turned **off**, `PackReady` resolves a calibrated quality to name the pack, which surveys the file the first time. |
+| L13 | `JLDisplayCore/jl_util.cpp:97` `Fnv1aHex` | correctness (cosmetic) | The offset basis is `1469598103934665603`, the standard FNV-1a 64 basis with its last digit dropped, so cache keys are not standard FNV. Hashing quality is unaffected. Fixing it would invalidate every pack and calibration on every machine. Found by the new native tests, which now pin the constant so a change is a deliberate cache break. |
 
 ## Checked and found sound
 

@@ -11,6 +11,10 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "JLDisplayNative", "JLDispla
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "JLDisplayManager", "JLDisplayManager\JLDisplayManager.csproj", "{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D03}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "JLDisplayCore.Tests", "JLDisplayCore.Tests\JLDisplayCore.Tests.vcxproj", "{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D04}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "JLDisplayManager.Tests", "JLDisplayManager.Tests\JLDisplayManager.Tests.csproj", "{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D05}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -51,6 +55,18 @@ Global
 		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D03}.Release|x64.Build.0 = Release|x64
 		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D03}.Release|x86.ActiveCfg = Release|x64
 		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D03}.Release|x86.Build.0 = Release|x64
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D04}.Debug|x64.ActiveCfg = Release|x64
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D04}.Debug|x64.Build.0 = Release|x64
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D04}.Debug|x86.ActiveCfg = Release|Win32
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D04}.Release|x64.ActiveCfg = Release|x64
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D04}.Release|x64.Build.0 = Release|x64
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D04}.Release|x86.ActiveCfg = Release|Win32
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D05}.Debug|x64.ActiveCfg = Release|x64
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D05}.Debug|x64.Build.0 = Release|x64
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D05}.Debug|x86.ActiveCfg = Release|x64
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D05}.Release|x64.ActiveCfg = Release|x64
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D05}.Release|x64.Build.0 = Release|x64
+		{2A7F1E44-3C55-4B21-9E8D-1F0A6C3B7D05}.Release|x86.ActiveCfg = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

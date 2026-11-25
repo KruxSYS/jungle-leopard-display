@@ -47,7 +47,7 @@ namespace {
 
     // ---------------------------------------------------------------------
 
-    void FrameBudget()
+    void TestFrameBudget()
     {
         g_test = "frame_budget";
         using jl::FrameBudget;
@@ -69,7 +69,7 @@ namespace {
         CHECK(FrameBudget(0, -5) == FrameBudget(0, 30));
     }
 
-    void ValidateOpts()
+    void TestValidateOpts()
     {
         g_test = "validate_opts";
         std::wstring why;
@@ -104,7 +104,7 @@ namespace {
             CHECK(!ok(with([&](jl::RenderOpts& r) { r.hwaccel = bad; })));
     }
 
-    void BuildFilter()
+    void TestBuildFilter()
     {
         g_test = "build_filter";
         using jl::detail::BuildFilter;
@@ -122,7 +122,7 @@ namespace {
         CHECK(!Contains(BuildFilter(true, 0), L"pad="));
     }
 
-    void Commands()
+    void TestCommands()
     {
         g_test = "ffmpeg_commands";
         using namespace jl::detail;
@@ -162,14 +162,19 @@ namespace {
         CHECK(Contains(raw, L"-f rawvideo -"));
     }
 
-    void CacheKeys()
+    void TestCacheKeys()
     {
         g_test = "cache_keys";
         using jl::detail::CalibrationKey;
         using jl::detail::Fnv1aHex;
 
-        // The hash: stable, 16 hex digits, and FNV-1a 64 of "" is its offset basis.
-        CHECK(Fnv1aHex("") == "cbf29ce484222325");
+        // The hash: stable and 16 hex digits. Of "" it is its offset basis -
+        // which is 1469598103934665603, the standard FNV-1a basis
+        // (14695981039346656037) with its last digit lost. Harmless, and pinned
+        // here on purpose: every pack and calibration on every machine is keyed
+        // with it, so "correcting" it would throw all of them away. Change it
+        // only as a deliberate cache break. (Audit L13.)
+        CHECK(Fnv1aHex("") == "14650fb0739d0383");
         CHECK(Fnv1aHex("abc") == Fnv1aHex("abc"));
         CHECK(Fnv1aHex("abc") != Fnv1aHex("abd"));
         CHECK(Fnv1aHex("x").size() == 16);
@@ -224,7 +229,7 @@ namespace {
         return 0;
     }
 
-    void PipeNotInherited()
+    void TestPipeNotInherited()
     {
         g_test = "pipe_not_inherited";
 
@@ -266,7 +271,7 @@ namespace {
     // The per-frame ladder: fits the budget when it can, never exceeds the
     // panel's cap, always 960x480 baseline 4:2:0, and is a pure function of
     // the pixels - the pack builder's dedupe depends on that last one.
-    void EncodeToFit()
+    void TestEncodeToFit()
     {
         g_test = "encode_jpeg_to_fit";
         using namespace jl::detail;
@@ -326,13 +331,13 @@ namespace {
 int wmain()
 {
     // The core logs through a per-thread sink; nothing installed means quiet.
-    FrameBudget();
-    ValidateOpts();
-    BuildFilter();
-    Commands();
-    CacheKeys();
-    PipeNotInherited();
-    EncodeToFit();
+    TestFrameBudget();
+    TestValidateOpts();
+    TestBuildFilter();
+    TestCommands();
+    TestCacheKeys();
+    TestPipeNotInherited();
+    TestEncodeToFit();
 
     std::printf("core tests: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

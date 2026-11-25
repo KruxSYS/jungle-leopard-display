@@ -65,3 +65,6 @@ Desktop.ini
 JLDisplayCore/JLDisplayCore/
 # Tool caches
 .serena/
+
+# Test projects build here, kept out of x64\Release (the release drop)
+/test-out/
