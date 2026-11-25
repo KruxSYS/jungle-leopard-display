@@ -62,21 +62,68 @@ namespace jl {
             // The child must not inherit our read end, or the pipe never signals EOF.
             SetHandleInformation(readEnd, HANDLE_FLAG_INHERIT, 0);
 
-            STARTUPINFOW si{};
-            si.cb = sizeof(si);
-            si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-            si.wShowWindow = SW_HIDE;
-            si.hStdOutput = writeEnd;
-            si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-            si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+            // The child inherits exactly the handles named here and nothing else.
+            //
+            // CreateProcess with inheritance on hands the child EVERY inheritable
+            // handle in the process, and this function runs on more than one
+            // thread at once - playback streams while the music follower builds
+            // a pack behind it. Between this thread's CreatePipe and its
+            // CloseHandle(writeEnd) below, another thread's ffmpeg could inherit
+            // this pipe's write end. Then this pipe cannot reach EOF until that
+            // unrelated ffmpeg exits: ReadFile blocks, the play loop never sees
+            // its source end, and jl_stop - which waits for the worker - freezes
+            // the UI for as long as the other build runs. The pack file handle
+            // documented in jl_pack.cpp was the same leak in another shape.
+            //
+            // stdin and stderr are passed through as inheritable duplicates so
+            // the list names only handles this call created; a console's own
+            // handles may not be inheritable, and the list refuses those.
+            auto inheritableCopy = [](HANDLE h) -> HANDLE {
+                if (!h || h == INVALID_HANDLE_VALUE) return nullptr;
+                HANDLE dup = nullptr;
+                if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &dup,
+                        0, TRUE, DUPLICATE_SAME_ACCESS))
+                    return nullptr;
+                return dup;
+            };
+            HANDLE errCopy = inheritableCopy(GetStdHandle(STD_ERROR_HANDLE));
+            HANDLE inCopy = inheritableCopy(GetStdHandle(STD_INPUT_HANDLE));
+
+            HANDLE inherit[3];
+            DWORD  count = 0;
+            inherit[count++] = writeEnd;
+            if (errCopy) inherit[count++] = errCopy;
+            if (inCopy)  inherit[count++] = inCopy;
+
+            SIZE_T listBytes = 0;
+            InitializeProcThreadAttributeList(nullptr, 1, 0, &listBytes);
+            std::vector<uint8_t> listBuf(listBytes);
+            auto list = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(listBuf.data());
+            bool haveList = InitializeProcThreadAttributeList(list, 1, 0, &listBytes)
+                && UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                    inherit, count * sizeof(HANDLE), nullptr, nullptr);
+
+            STARTUPINFOEXW si{};
+            si.StartupInfo.cb = sizeof(si);
+            si.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+            si.StartupInfo.wShowWindow = SW_HIDE;
+            si.StartupInfo.hStdOutput = writeEnd;
+            si.StartupInfo.hStdError = errCopy;
+            si.StartupInfo.hStdInput = inCopy;
+            si.lpAttributeList = haveList ? list : nullptr;
 
             PROCESS_INFORMATION pi{};
             std::vector<wchar_t> buf(cmdline.begin(), cmdline.end());
             buf.push_back(L'\0');
 
             BOOL ok = CreateProcessW(nullptr, &buf[0], nullptr, nullptr, TRUE,
-                CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+                CREATE_NO_WINDOW | (haveList ? EXTENDED_STARTUPINFO_PRESENT : 0),
+                nullptr, nullptr, &si.StartupInfo, &pi);
+
+            if (haveList) DeleteProcThreadAttributeList(list);
             CloseHandle(writeEnd);   // our copy; the child holds the other
+            if (errCopy) CloseHandle(errCopy);
+            if (inCopy)  CloseHandle(inCopy);
 
             if (!ok) {
                 CloseHandle(readEnd);
