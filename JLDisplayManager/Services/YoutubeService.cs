@@ -77,14 +77,18 @@ public sealed class YtDlp
     public string Description =>
         _moduleArgs.Length > 0 ? $"{_executable} {_moduleArgs[1]}" : _executable;
 
+    private const int ProbeTimeoutMs = 20_000;
+
     private static bool Runs(string executable, string[] moduleArgs)
     {
+        // Output not redirected: nothing reads it, and a redirected pipe nobody
+        // drains is a child that can block forever on a write. Bounded for the
+        // same reason - a probe that hangs (a python that prompts, a first-run
+        // self-update) must not hold whoever is waiting on it.
         var psi = new ProcessStartInfo(executable)
         {
             UseShellExecute = false,
             CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
         };
         foreach (string a in moduleArgs) psi.ArgumentList.Add(a);
         psi.ArgumentList.Add("--version");
@@ -93,7 +97,11 @@ public sealed class YtDlp
         {
             using var process = Process.Start(psi);
             if (process is null) return false;
-            process.WaitForExit();
+            if (!process.WaitForExit(ProbeTimeoutMs))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
             return process.ExitCode == 0;
         }
         catch
