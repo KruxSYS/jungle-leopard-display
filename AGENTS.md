@@ -294,6 +294,15 @@ The registry polls on a **`System.Threading.Timer`**, i.e. the thread pool. Code
 that floods the pool thins out the sensor history; this was measured, not
 theorised.
 
+**A reading not published on a tick is held, so a provider whose readings belong
+to something transient must `Clear` them.** `_values` is only ever written; there
+is no expiry. Holding is right for a temperature and wrong for anything scoped to
+one track, file or session, and the failure is silent in the worst way — the
+stale entry stays `Available`, so a layer's visibility rule still passes and the
+old figure is drawn under the new title. `MediaSessionProvider` keeps the list of
+ids this applies to (`TrackSensors`) and publishes or clears every one of them on
+every tick. Adding a `music.*` sensor means adding it there too.
+
 ## Stopping an item blocks the caller
 
 `jl_show_image`, `jl_play_video` and `jl_play_stream` all begin with
@@ -354,13 +363,85 @@ song), others report 0 for the whole track while the position advances perfectly
 So:
 
 - Every `music.*` layer that needs a length is hidden when there is none, rather
-  than drawing an empty bar and a `--`.
+  than drawing an empty bar and a `--`. That only works if the length is
+  **cleared** rather than skipped when it goes missing — see the sensors section.
+  Skipping it left the previous track's 1:33 on the card against a 3:29 song,
+  visible because the stale reading still counted as available.
 - `TrackResolver` cannot lean on the duration match alone. It has a title-and-
   artist path for exactly this case, and that path is **not** a rare fallback.
+  On this machine 13 of 80 cached matches were made that way.
 
-**Position, by contrast, is reliable.** The reader extrapolates it from
-`LastUpdatedTime` (players refresh the timeline every few seconds, not every
-frame), and it tracks wall clock to about 10 ms per second.
+**A title-only match can be the wrong length, and everything downstream has to
+survive that.** This is the sharpest edge in the whole feature. With no song
+length there is nothing to check a candidate against, so any upload of the right
+name over `MinPlausibleVideoSeconds` is accepted — and for a 3:29 song, a 1:33
+upload clears that bar. What that used to cause, all from the one hole:
+
+- `OnPrepared` reset `start` to 0 when the song was past the video's end
+  ("never past the end, whatever the numbers say"), putting the opening of the
+  video against the middle of the song. That was the whole of "it is not
+  synced".
+- `PlayPack` clamped a seek past the end onto the last frame, so a follower
+  asking for a position the video does not have replayed its final moment over
+  and over. That was "it loops the end".
+- The video's own length reached the window's timeline as the item's length,
+  because the follower passes `m.Duration > 0 ? m.Duration : videoSeconds`. That
+  was "the end time is wrong".
+
+Now: a seek past the end **ends** playback; a song still playing
+`VideoEndedGrace` after its video ran out is proof the match was wrong, so
+`TrackResolver.TooShort` drops it and keeps the length it failed at as a floor
+(`CacheEntry.MinSeconds`) that the title-only path must clear next time; and the
+track is marked `_exhaustedTrack` so the card holds the panel for the rest of the
+song rather than the video being restarted at a position it does not have.
+
+That floor is the **only** way the length of a song the player will not describe
+is ever learned. Do not remove it because it looks like a cache oddity.
+
+**Position is NOT reliable, and believing it was cost a lot.** The reader
+extrapolates from `LastUpdatedTime`, and that only works while the stamp holds
+still. Firefox re-stamps it mid-song while still reporting `Position` and
+`EndTime` as zero, and the extrapolation then collapses to the age of the new
+stamp — about three seconds. Measured on one track, ten seconds apart:
+
+```
+23:30:05  pos=37.14  dur=113.94
+23:30:15  pos=3.43   dur=0.00     <- same track, same play
+```
+
+Downstream, a song apparently jumping to 0:03 is indistinguishable from the
+listener dragging the scrubber there, so the follower hauled the video back to
+the start — twelve times in half an hour, none of them asked for. That is what
+"it is not synced", "it loops", and "the end time is wrong" all were.
+
+So `RefreshTimeline` treats a timeline reporting **no end and a zero position**
+as no information at all:
+
+- it is worth exactly one guess, when a track is first seen, because `age` is
+  then a fair estimate of how far in we are joining;
+- after that our own clock (`basePosition` + `baseAtMs`) carries the position and
+  the player is not allowed to move it;
+- the **duration is held the same way** — a timeline that stops describing one
+  must not set the track's length back to 0 halfway through;
+- a track change (`trackVersion++`) clears both, so nothing is ever inherited
+  from the previous song.
+
+The test that matters is `!r.basePositionKnown` — do we have a clock for this
+track at all. An earlier attempt asked whether the clock had been *started* from
+a timeline like this, which missed the case that actually happens: a track that
+described itself perfectly and then stopped.
+
+**The card forces compositing on, and that override must not be persisted.**
+`OverlayService.SetEnabled` takes `persist` for this: the follower passes
+`false` both when forcing the card on and when putting back what the user had,
+because neither is a choice the user just made. Persisting it meant an app that
+died with the card up kept "overlay on" as the user's preference, and
+`RememberOverlay` — reading that flag back to know what to restore — then
+turned their own overlay on over every video. `RememberOverlay` also refuses to
+remember the **card** as the profile to return to, for the same reason: finding
+it active says a previous run ended without putting it back, and returning
+"video" to the card composites the whole card over the video, which reads as the
+video playing behind it.
 
 **The card is an ordinary overlay profile** with a fixed id
 (`OverlaySettings.NowPlayingId`), added to the user's profile list so it shows in
@@ -392,11 +473,94 @@ right way up, and everything legible is the overlay's, which rotates itself).
 still is one the panel cannot decode.
 
 **`jl_play_stream` is separate from `jl_play_video` on purpose.** A stream is
-never packed and never calibrated — no file identity to key a pack on, and a
-survey would fetch the whole thing a second time. Its URL and headers are a
+never packed — no file identity to key a pack on. Its URL and headers are a
 separate argument rather than fields on `JlRenderOpts` because that struct is key
 material for the calibration and pack caches; a signed URL that changes every
 play would turn every cache entry into a miss.
+
+**It does not follow that a followed video cannot be preprocessed, and that is
+what it now is.** The stream path exists for `startAt` — joining a song in
+progress, which the video path has no way to express — but what it plays is a
+file `yt-dlp` has already fetched, so a pack has something to key on after all.
+
+Why it matters: the stream path's quality is fixed up front at `-q:v 3`, and that
+is a guess, not a guarantee. A busy video encodes frames past `kMaxJpegBytes` at
+it, the player **drops** those rather than sending them, and dropped frames are
+what "the video skips" looks like from the sofa. A per-frame pack budgets bytes a
+second instead (`FrameBudget`), so no frame is ever over the cap by construction.
+Seeking gets better in the same move: a pack seek is an index, not ffmpeg
+restarted onto the nearest keyframe.
+
+**Never block a play on a build.** The first cut did, and that one mistake broke
+the feature three ways: the panel held the card for the whole build with no sign
+of progress; a two-minute song could end before its own video appeared; and the
+video then started at the position the song held when the build *began*, so it
+opened as much as a minute behind and stayed there until the drift corrector
+dragged it back. `playing ... from 75.3s` followed half a minute later by
+`followed a seek to 178.2s` is that bug's signature in the log.
+
+So the order is **play, build behind, swap**:
+
+- `MusicFollower.Prepare` returns the `-q:v` to start with and calls
+  `StartPacking`. Already packed (`DisplayService.PackReady`) returns 0 and plays
+  straight from the pack.
+- The first pass streams at that surveyed `-q:v`, so its frames are at least
+  inside the panel's cap while the build runs.
+- `StartPacking` builds on a **below-normal priority** thread, one at a time
+  (`_packLock`) - the encoding is on that thread and must not starve the playback
+  it runs behind. A skipped song goes unbuilt; it was not being watched.
+- `OnPacked` swaps onto the frames if the same song is still playing from the
+  same file, re-reading the position at that moment. **No `StartLeadSeconds`
+  here**: that allowance pays for ffmpeg connecting and decoding, and a pack has
+  already done both.
+- **`WorkerProc`'s stream branch adopts, never builds** - `GetPack(..., adoptOnly)`.
+- **Disk mode regardless of the setting**, for local-file streams. A memory pack
+  cannot survive the gap between the thread that builds it and the one that plays
+  it, and a downloaded song is a file that gets played again.
+- `DisplayService.StreamOpts` builds the options for **both** calls. The pack
+  cache keys on them, so one field differing between the build and the play means
+  playback silently transcodes instead. Quality is 0 on the packing path on
+  purpose: naming a `-q:v` turns per-frame quality off in the builder.
+- `PlayPack` takes `startSeconds`, applied to the first pass only.
+
+**A child process inherits our file handles, and one of them was the pack.**
+`StartFfmpegPipe` creates ffmpeg with inheritance on, and the disk pack is
+opened *before* `build()` spawns it — so ffmpeg was handed a duplicate handle
+to the pack file and held it until it exited. Our own `fclose` released nothing
+that mattered, and the adopt at the end of `GetPack` got
+`ERROR_SHARING_VIOLATION` from apparently nowhere. Small packs were fine because
+ffmpeg had already gone, which made it look like a size limit, then a virus
+scanner, then a rename bug. It was none of those. The pack file is opened
+`_wfsopen(path, L"wbN", _SH_DENYWR)`: **"N" is no-inherit** and is the fix;
+`_SH_DENYWR` lets readers in and keeps other writers out. Never `_wfopen_s`
+here — its handles are not shareable at all.
+
+Two things follow from the same episode. The pack is written **straight to its
+final name**, with the magic stamped last, so an unfinished file is one
+`AdoptFile` rejects — the temp-and-rename it replaced carried only the process
+id in its name, so two builds of one video in one process shared it. And
+`jl_preprocess` treats **a valid pack on disk as success** even when this call
+could not map it: what was asked for was a pack in the cache, and a minute of
+encoding is not worth discarding over the last step.
+
+**A build has to be visible.** `jl_preprocess_frames` reports frames built so far
+(-1 when idle); the core end of it is `PackProgressFn` on `GetPack`. The follower
+turns that into a percentage - it knows the length and the frame rate, the core
+knows neither - and publishes through `MusicPrepare`, which the sensor provider
+reads into `music.fetching` / `music.fetch` / `music.stage`. The card's existing
+download bar therefore covers both waits, which is why its label is
+`{music.stage}` rather than the word "Fetching".
+
+**`EncodeJpegToFit` takes the previous frame's answer as a hint** and gallops out
+from it instead of bisecting the whole ladder from the ceiling. Consecutive
+frames of a video land a step or two apart, so this is 2-3 encodes a frame
+against about 6 at a high ceiling, and the ladder is monotonic in size so the
+answer is identical either way. It is the difference between a build that
+outlives the song and one that does not.
+
+The cost is disk: a per-frame pack runs about 1.15 MB/s of video, so a
+three-minute song is ~200 MB in the shared pack cache (`DiskBudgetMB`, LRU). Songs
+and library videos now compete for it.
 
 **ffmpeg needs outbound network permission for the video path, and nothing says
 so when it does not have it.** On this machine — default-deny outbound plus

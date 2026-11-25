@@ -116,6 +116,20 @@ namespace {
         std::wstring hwaccelResolved;
         bool         hwaccelKnown = false;
 
+        // How far the jl_preprocess call in flight has got, in frames, or -1
+        // when there is none. Atomic rather than under `state` because it is
+        // written from whatever background thread the host preprocesses on and
+        // polled from the UI thread, and it belongs to neither the session nor
+        // the item being played.
+        std::atomic<int64_t> preprocessFrames{ -1 };
+        std::atomic<int64_t> preprocessBytes{ 0 };
+
+        // The last thing a preprocess said for itself. Guarded by `state` like
+        // the other strings, and deliberately not `message`: that one belongs
+        // to whatever is on the panel, and a build runs behind it.
+        std::wstring preprocessMessage;
+        bool         preprocessHadProblem = false;
+
         Session()
         {
             InitializeCriticalSection(&cmd);
@@ -162,6 +176,29 @@ namespace {
         Guard lock(g.state);
         if (level == jl::LogLevel::Error) g.error = text;
         else                              g.message = text;
+    }
+
+    // The log sink for a preprocess. Warnings and errors are what a caller
+    // needs — "ffmpeg exited with code 1 partway through" is the whole answer to
+    // why a pack did not appear — so those stick and progress chatter does not.
+    void PreprocessLog(jl::LogLevel level, const wchar_t* text, void*)
+    {
+        if (level == jl::LogLevel::Progress) return;
+
+        Guard lock(g.state);
+
+        // The FIRST problem, not the last. The last one is always the outermost
+        // complaint - "the pack just written would not load" - and the reason it
+        // would not is in the warning before it, which overwriting threw away.
+        const bool problem = level == jl::LogLevel::Warn || level == jl::LogLevel::Error;
+
+        if (problem && !g.preprocessHadProblem) {
+            g.preprocessMessage = text;
+            g.preprocessHadProblem = true;
+        }
+        else if (!problem && !g.preprocessHadProblem) {
+            g.preprocessMessage = text;
+        }
     }
 
     void CopyTo(wchar_t* dst, size_t cch, const std::wstring& src)
@@ -261,6 +298,59 @@ namespace {
         PublishFrame(jpeg);
     }
 
+    // Whether a "stream" is really a file sitting on this machine.
+    //
+    // The music follower's videos are: it downloads them and then plays them
+    // through the stream path for one reason, its start offset, which the video
+    // path has no way to express. So the objections to preprocessing a stream —
+    // no file to key a pack on, a survey that would fetch the source twice —
+    // do not apply to them, and this is how that case is told apart.
+    bool IsLocalFile(const std::wstring& path)
+    {
+        if (path.empty()) return false;
+        if (path.find(L"://") != std::wstring::npos) return false;
+
+        const DWORD attrs = GetFileAttributesW(path.c_str());
+        return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+    }
+
+    // The host's render options as the core wants them, validated, with
+    // "auto" hwaccel resolved once for the process.
+    //
+    // Shared by the two device-free entry points — jl_preprocess and
+    // jl_pack_ready — because they have to agree with each other exactly: the
+    // pack cache keys on these, so a field translated differently in one of
+    // them means asking about a pack nobody built.
+    bool OptsFromApi(const JlRenderOpts& in, jl::RenderOpts& out)
+    {
+        out.stretch = in.stretch != 0;
+        out.rotate = in.rotate;
+        out.fps = in.fps;
+        out.quality = in.quality;
+        out.recalibrate = in.recalibrate != 0;
+        out.perFrameQuality = in.perFrameQuality != 0;
+        out.qualityCeiling = in.qualityCeiling;
+        out.byteRate = in.byteRate;
+
+        wchar_t hw[32];
+        CopyTo(hw, _countof(hw), in.hwaccel);
+        out.hwaccel = hw;
+        if (out.hwaccel == L"none") out.hwaccel.clear();
+
+        std::wstring problem;
+        if (!jl::ValidateOpts(out, problem)) return false;
+
+        if (out.hwaccel == L"auto") {
+            if (!g.hwaccelKnown) {
+                g.hwaccelResolved = jl::ResolveHwaccel(jl::FindFfmpeg(), L"auto");
+                g.hwaccelKnown = true;
+            }
+            out.hwaccel = g.hwaccelResolved;
+        }
+
+        return true;
+    }
+
     jl::Preprocess CurrentMode()
     {
         switch (g.preprocess.load()) {
@@ -342,12 +432,48 @@ namespace {
         }
 
         if (kind == ItemKind::Stream) {
-            // Never packed and never calibrated: there is no file identity to
-            // key a pack on, and a survey would fetch the whole thing a second
-            // time. Streaming is the only mode a live source has.
-            SetState(JL_STATE_PLAYING);
-
             jl::StreamSource stream = g.itemStream;
+
+            // A live URL cannot be packed and cannot be calibrated: nothing to
+            // key either on, and a survey would fetch the whole thing a second
+            // time. Streaming is the only mode it has.
+            //
+            // A downloaded music video is not that, and playing it as though it
+            // were cost the feature the two things preprocessing is for. Its
+            // frames were transcoded live at a fixed guess of a quality — which
+            // a busy video beats, and the frames it makes too big are dropped
+            // rather than sent, which is what "the video skips" is. And every
+            // seek restarted ffmpeg to land on a keyframe, where a pack seeks
+            // by index, exactly, for nothing.
+            //
+            // Disk regardless of the mode, and adopt rather than build: the
+            // host preprocesses this file before it asks for playback (see
+            // jl_preprocess), a memory pack cannot survive that gap, and a
+            // build inside this call would hold the panel on the card for as
+            // long as it took. Not there — a fresh download, a full cache — and
+            // streaming still works.
+            if (mode != jl::Preprocess::Off && IsLocalFile(path)) {
+                jl::FramePack pack;
+
+                if (jl::GetPack(path, opts, jl::Preprocess::Disk, pack,
+                        ShouldAbort, nullptr, nullptr, /*adoptOnly*/ true)) {
+                    if (ShouldAbort(nullptr)) return 0;
+
+                    SetState(JL_STATE_PLAYING);
+
+                    jl::PlaybackStats stats;
+                    bool ok = jl::PlayPack(g.device, pack, opts, ShouldAbort, nullptr,
+                        OnFrame, nullptr, &stats, TakeSeek, nullptr, OnPosition, nullptr,
+                        &comp, stream.startAt);
+
+                    FinishPlayback(ok, stats);
+                    return 0;
+                }
+
+                if (ShouldAbort(nullptr)) return 0;
+            }
+
+            SetState(JL_STATE_PLAYING);
 
             jl::PlaybackStats stats;
             bool ok = jl::PlayVideo(g.device, path, opts, ShouldAbort, nullptr,
@@ -643,10 +769,19 @@ int32_t jl_play_stream(const wchar_t* url, const wchar_t* inputArgs,
     stream.startAt = startSeconds > 0 ? startSeconds : 0.0;
     stream.duration = durationSeconds > 0 ? durationSeconds : 0.0;
 
-    // A stream has no calibrated figure, so it uses the one calibration lands
-    // on for nearly everything anyway — about 37 KB a frame, which at 30 fps is
-    // kDefaultByteRate. It therefore sends no more than the app always has.
-    stream.quality = 3;
+    // A stream normally has no calibrated figure, so it commits to the one
+    // calibration lands on for nearly everything anyway — about 37 KB a frame,
+    // which at 30 fps is kDefaultByteRate.
+    //
+    // "Normally", because -q:v 3 is a guess and not a guarantee: a busy source
+    // encodes frames over kMaxJpegBytes at it, and those are dropped rather
+    // than sent, which is visible as the picture skipping. Music videos are
+    // where that showed up, and they are also the case where the guess is
+    // unnecessary — the follower downloads the video before playing it, so
+    // there is a local file to calibrate and a path to key the answer on. A
+    // caller that has done so passes the figure in opts->quality and gets
+    // frames that are known to fit.
+    stream.quality = opts && opts->quality > 0 ? opts->quality : 3;
 
     return StartWorkerLocked(url, opts, ItemKind::Stream, &stream);
 }
@@ -678,6 +813,104 @@ int32_t jl_calibrate(const wchar_t* path, const JlRenderOpts* opts)
 
     int quality = jl::ResolveQuality(path, o, abortOnShutdown, nullptr);
     return quality > 0 ? quality : JL_ERR_FAILED;
+}
+
+int32_t jl_preprocess_frames(void)
+{
+    return (int32_t)g.preprocessFrames.load();
+}
+
+int32_t jl_preprocess_message(wchar_t* buf, int32_t cch)
+{
+    Guard lock(g.state);
+    CopyTo(buf, (size_t)cch, g.preprocessMessage);
+    return g.preprocessMessage.empty() ? JL_ERR_FAILED : JL_OK;
+}
+
+int32_t jl_pack_ready(const wchar_t* path, const JlRenderOpts* opts)
+{
+    if (!path || !*path || !opts) return JL_ERR_BAD_ARGS;
+
+    jl::RenderOpts o;
+    if (!OptsFromApi(*opts, o)) return JL_ERR_BAD_ARGS;
+
+    // Adopt-only, so this asks the question without answering it the expensive
+    // way. Closed again immediately: the point is whether playback will find a
+    // pack, not to hold one open here.
+    jl::FramePack pack;
+    auto abortOnShutdown = [](void*) -> bool { return g.shuttingDown.load(); };
+
+    bool have = jl::GetPack(path, o, jl::Preprocess::Disk, pack,
+        abortOnShutdown, nullptr, nullptr, /*adoptOnly*/ true);
+    pack.Close();
+
+    return have ? JL_OK : JL_ERR_FAILED;
+}
+
+int32_t jl_preprocess(const wchar_t* path, const JlRenderOpts* opts)
+{
+    if (!path || !*path || !opts) return JL_ERR_BAD_ARGS;
+
+    // The same bargain as jl_calibrate, one step further: no device state, no
+    // session lock, blocking, and safe on a background thread while something
+    // else is on the panel. What it leaves behind is a pack in the disk cache,
+    // which is the only place one can wait between being built and being
+    // played — so this is how a host that wants its frames ready before it
+    // asks for playback gets them there.
+    jl::RenderOpts o;
+    if (!OptsFromApi(*opts, o)) return JL_ERR_BAD_ARGS;
+
+    auto abortOnShutdown = [](void*) -> bool { return g.shuttingDown.load(); };
+
+    // The core's log sink is per-thread, and this thread had none — so every
+    // diagnostic a failing build produced went nowhere, and "it came to nothing"
+    // was all anybody could be told. See jl_preprocess_message.
+    {
+        Guard lock(g.state);
+        g.preprocessMessage.clear();
+        g.preprocessHadProblem = false;
+    }
+    jl::SetLogSink(PreprocessLog, nullptr);
+
+    // Published for jl_preprocess_frames, so a host can say how far this has
+    // got rather than leaving a minute of silence. Cleared on every exit path.
+    g.preprocessFrames.store(0);
+    g.preprocessBytes.store(0);
+    struct Done {
+        ~Done()
+        {
+            g.preprocessFrames.store(-1);
+            g.preprocessBytes.store(0);
+        }
+    } done;
+
+    auto onProgress = [](size_t frames, uint64_t bytes, void*) {
+        g.preprocessFrames.store((int64_t)frames);
+        g.preprocessBytes.store((int64_t)bytes);
+    };
+
+    // Closed again immediately. The pack is wanted on disk, not in this
+    // caller's hands: playback opens its own view of the same file, and holding
+    // a mapping here would only keep the eviction sweep off it.
+    jl::FramePack pack;
+    bool ok = jl::GetPack(path, o, jl::Preprocess::Disk, pack,
+        abortOnShutdown, nullptr, nullptr, /*adoptOnly*/ false,
+        onProgress, nullptr);
+    pack.Close();
+
+    if (ok) return JL_OK;
+
+    // GetPack ends by mapping what it built, and reports failure if it cannot.
+    // That is right for a caller about to play the thing and wrong for this
+    // one: what was asked for was a pack in the cache, and if one is there and
+    // loads, the job is done however this call went. A minute of encoding is
+    // not worth discarding over the last step of it.
+    jl::FramePack check;
+    bool onDisk = jl::GetPack(path, o, jl::Preprocess::Disk, check,
+        abortOnShutdown, nullptr, nullptr, /*adoptOnly*/ true);
+    check.Close();
+
+    return onDisk ? JL_OK : JL_ERR_FAILED;
 }
 
 void jl_stop(void)

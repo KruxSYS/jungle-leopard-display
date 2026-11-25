@@ -300,6 +300,23 @@ public sealed class SensorRegistry : IDisposable, ISensorHistory
             }
         }
 
+        public void Clear(string id)
+        {
+            if (!Owns(id)) return;
+
+            lock (_r._lock)
+            {
+                // Dropped rather than stored as an unavailable reading, so
+                // Snapshot.Has is false too and a value that comes back lands
+                // whole instead of easing up from whatever it used to be.
+                //
+                // History is left alone on purpose: a graph of the last two
+                // minutes should still show the samples that were real when
+                // they were taken.
+                _r._values.Remove(id);
+            }
+        }
+
         // A second provider describing the same id is a fallback, not an
         // override: whoever registered it first keeps it for the session.
         private bool Owns(string id) =>

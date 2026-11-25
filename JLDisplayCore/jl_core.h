@@ -200,6 +200,13 @@ namespace jl {
     // Return true to stop work at the next opportunity — checked per frame.
     using AbortFn = bool (*)(void* user);
 
+    // How a pack build says how far it has got: the frames written so far and
+    // the bytes they came to, called every few hundred milliseconds. It exists
+    // because a build is the one thing in here that takes a minute with nothing
+    // on screen to show for it, and a host that cannot say "43%" has to say
+    // nothing at all.
+    using PackProgressFn = void (*)(size_t frames, uint64_t bytes, void* user);
+
     // Handed the ffmpeg child's process handle as each pass starts, and nullptr
     // as it ends.
     //
@@ -534,21 +541,33 @@ namespace jl {
     // False means "fall back to streaming" — over the memory budget, ffmpeg
     // failed, or `abort` fired. Blocking, and building a long video takes a
     // while; it reports throughout at the Progress log level.
+    //
+    // `adoptOnly` takes a pack that is already on disk and otherwise returns
+    // false without building one. It is for a caller that preprocesses ahead of
+    // playback and must not have a build happen inside a play call — the music
+    // follower, whose panel is showing a card that it would hold for the length
+    // of the build.
     bool GetPack(const std::wstring& path, const RenderOpts& opts, Preprocess mode,
-        FramePack& pack, AbortFn abort, void* abortUser, PackStats* stats);
+        FramePack& pack, AbortFn abort, void* abortUser, PackStats* stats,
+        bool adoptOnly = false,
+        PackProgressFn onProgress = nullptr, void* progressUser = nullptr);
 
     // Plays a built pack, pacing and holding live mode exactly as PlayVideo
     // does. No child process is involved.
     //
     // Seeking here is just an index: the frames are already built and evenly
     // spaced, so a jump costs nothing and lands exactly where it was asked to.
+    // `startSeconds` is the same arithmetic applied to the first pass, which is
+    // how a pack joins something already in progress; later laps of a loop
+    // start at the top, as they do after a seek.
     bool PlayPack(Device& device, const FramePack& pack, const RenderOpts& opts,
         AbortFn abort, void* abortUser,
         FrameFn onFrame, void* frameUser,
         PlaybackStats* stats,
         SeekFn takeSeek = nullptr, void* seekUser = nullptr,
         PositionFn onPosition = nullptr, void* positionUser = nullptr,
-        const Compositor* comp = nullptr);
+        const Compositor* comp = nullptr,
+        double startSeconds = 0.0);
 
     // PrepareImage with the answer remembered, so a still in a playlist is
     // transcoded once rather than once per rotation. Off transcodes every time.

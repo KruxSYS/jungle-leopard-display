@@ -58,6 +58,18 @@ public static class TrackResolver
         /// </summary>
         public double Seconds { get; set; }
 
+        /// <summary>
+        /// The shortest candidate worth considering for this track, learned the
+        /// only way it can be when the player reports no length: by a match
+        /// running out while the song carried on. 0 until that happens.
+        ///
+        /// This is what stops the same wrong video being chosen again. A
+        /// title-only search has nothing to check a candidate's length against,
+        /// so it takes anything long enough to be a song at all — and for a
+        /// 3:29 song, a 1:33 upload of the same name clears that bar.
+        /// </summary>
+        public double MinSeconds { get; set; }
+
         public DateTime WhenUtc { get; set; }
     }
 
@@ -96,7 +108,7 @@ public static class TrackResolver
 
         if (IsKnownMiss(key)) return null;
 
-        string? id = Search(ytdlp, title, artist, duration, maxSeconds,
+        string? id = Search(ytdlp, title, artist, duration, maxSeconds, Floor(key),
             out double seconds, out bool searched, token);
 
         // Only a search that actually ran is worth remembering. A blocked
@@ -123,7 +135,8 @@ public static class TrackResolver
     /// video" rather than "could not look". Only the former is worth caching.
     /// </param>
     private static string? Search(YtDlp ytdlp, string title, string artist, double duration,
-                                  double maxSeconds, out double chosenSeconds,
+                                  double maxSeconds, double minSeconds,
+                                  out double chosenSeconds,
                                   out bool searched, CancellationToken token)
     {
         searched = false;
@@ -215,6 +228,10 @@ public static class TrackResolver
             // title match will do, and among those the artist's own upload
             // beats a lyric video or somebody's re-upload.
             if (!Contains(candidate, title)) continue;
+
+            // Too short to be this song, as proved by a previous match running
+            // out while the song played on. See CacheEntry.MinSeconds.
+            if (minSeconds > 0 && seconds < minSeconds) continue;
             if (best == null || (named && !bestNamed))
             {
                 best = id;
@@ -260,7 +277,55 @@ public static class TrackResolver
             if (!_cache!.TryGetValue(key, out CacheEntry? e)) return false;
             if (e.VideoId != null) return false;
 
+            // Cleared on purpose so it would be searched again, with a floor to
+            // search under. That is the opposite of a miss.
+            if (e.MinSeconds > 0) return false;
+
             return DateTime.UtcNow - e.WhenUtc < MissLifetime;
+        }
+    }
+
+    /// <summary>The learned minimum length for a track, or 0.</summary>
+    private static double Floor(string key)
+    {
+        lock (Lock)
+        {
+            Load();
+            return _cache!.TryGetValue(key, out CacheEntry? e) ? e.MinSeconds : 0;
+        }
+    }
+
+    /// <summary>
+    /// Records that the video matched to this track ran out while the song was
+    /// still playing, so it cannot have been the right recording.
+    ///
+    /// The match is dropped and the length it failed at is kept as a floor, so
+    /// the next search for this song cannot pick it — or anything else too
+    /// short — again. This is the only way the length of a song a player will
+    /// not describe is ever learned.
+    /// </summary>
+    public static void TooShort(string title, string artist, double duration,
+                                double provenSeconds)
+    {
+        if (provenSeconds <= 0) return;
+
+        lock (Lock)
+        {
+            Load();
+            string key = Key(title, artist, duration);
+
+            _cache!.TryGetValue(key, out CacheEntry? e);
+            double had = e?.MinSeconds ?? 0;
+
+            _cache[key] = new CacheEntry
+            {
+                VideoId = null,
+                Seconds = 0,
+                MinSeconds = Math.Max(had, provenSeconds + 1),
+                WhenUtc = DateTime.UtcNow,
+            };
+
+            Save();
         }
     }
 

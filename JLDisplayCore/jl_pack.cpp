@@ -33,6 +33,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <share.h>      // _SH_DENYWR, for the pack file's sharing mode
 #include <algorithm>
 #include <atomic>
 
@@ -226,8 +227,46 @@ namespace jl {
 
         // Deletes least-recently-used packs until the cache fits, never touching
         // `keep` — which is the one just written and about to be mapped.
+        // Half-written packs from a build that was killed or crashed.
+        //
+        // ScanCache counts only .jlp and .jlf, so these are invisible to the
+        // budget and nothing was ever going to remove them: 15 of them, 1.5 GB,
+        // had collected in testing. Swept by age so a build running right now
+        // — in this process or another — keeps its own.
+        void SweepStaleTemps()
+        {
+            const std::wstring dir = PackDirectory();
+
+            FILETIME nowFt{};
+            GetSystemTimeAsFileTime(&nowFt);
+            const uint64_t now =
+                ((uint64_t)nowFt.dwHighDateTime << 32) | nowFt.dwLowDateTime;
+
+            // 100-nanosecond units, so an hour is this many.
+            const uint64_t hour = 36000000000ull;
+
+            WIN32_FIND_DATAW fd{};
+            HANDLE find = FindFirstFileW((dir + L"\\*.tmp").c_str(), &fd);
+            if (find == INVALID_HANDLE_VALUE) return;
+
+            do {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+
+                const uint64_t stamp =
+                    ((uint64_t)fd.ftLastWriteTime.dwHighDateTime << 32)
+                    | fd.ftLastWriteTime.dwLowDateTime;
+
+                if (now > stamp && now - stamp > hour)
+                    DeleteFileW((dir + L"\\" + fd.cFileName).c_str());
+            } while (FindNextFileW(find, &fd));
+
+            FindClose(find);
+        }
+
         void EnforceDiskBudget(const std::wstring& keep)
         {
+            SweepStaleTemps();
+
             std::vector<CacheEntry> entries = ScanCache();
 
             const uint64_t budget = DiskBudget();
@@ -246,6 +285,10 @@ namespace jl {
                 if (DeleteFileW((dir + L"\\" + e.name).c_str())) {
                     total -= e.bytes;
                     Log(LogLevel::Info, L"pack cache: evicted %s", e.name.c_str());
+                }
+                else {
+                    Log(LogLevel::Info, L"pack cache: could not evict %s (error %lu)",
+                        e.name.c_str(), GetLastError());
                 }
             }
         }
@@ -381,7 +424,8 @@ namespace jl {
         bool RunBuild(const std::wstring& ffmpeg, const std::wstring& input,
             const std::wstring& filter, const std::wstring& hwaccel,
             int fps, int quality, Sink& sink, size_t budget,
-            AbortFn abort, void* abortUser, BuildResult& result)
+            AbortFn abort, void* abortUser, BuildResult& result,
+            PackProgressFn onProgress, void* progressUser)
         {
             detail::FfmpegPipe pipe;
             std::wstring cl = detail::VideoCommand(ffmpeg, input, filter, hwaccel,
@@ -420,6 +464,9 @@ namespace jl {
                 DWORD now = GetTickCount();
                 if (now - lastPrint >= 250) {
                     lastPrint = now;
+                    if (onProgress)
+                        onProgress(result.index.size(), sink.offset, progressUser);
+
                     Log(LogLevel::Progress, L"  preprocessing: %zu frames, %llu MB, %.1fs",
                         result.index.size(),
                         (unsigned long long)(sink.offset / (1024 * 1024)),
@@ -427,7 +474,32 @@ namespace jl {
                 }
             }
 
+            // ffmpeg's exit code decides whether this pack is the whole video,
+            // and nothing else can. Reading to end of stream is not proof of
+            // completeness: a decoder that dies halfway closes the pipe in
+            // exactly the way one that finished does, and the pack left behind
+            // then plays the first part of the song and "ends" — which from the
+            // sofa is indistinguishable from a video that is simply too short,
+            // and which the disk cache would replay forever.
+            //
+            // It went unnoticed while builds ran with nothing else on the
+            // panel. Building behind a video that is already playing gives the
+            // two ffmpegs something to fall out over, and then it matters.
+            DWORD exitCode = 0;
+            if (pipe.process) {
+                WaitForSingleObject(pipe.process, 5000);
+                GetExitCodeProcess(pipe.process, &exitCode);
+            }
+
             pipe.Close();
+
+            if (!result.cancelled && exitCode != 0 && exitCode != STILL_ACTIVE) {
+                Log(LogLevel::Warn,
+                    L"ffmpeg exited with code %lu partway through - the pack would be "
+                    L"short, so it is not being kept", exitCode);
+                return false;
+            }
+
             return !wroteFailed;
         }
 
@@ -438,7 +510,8 @@ namespace jl {
         bool RunBuildPerFrame(const std::wstring& ffmpeg, const std::wstring& input,
             const std::wstring& filter, const std::wstring& hwaccel,
             int fps, int ceiling, size_t frameBudget, Sink& sink, size_t budget,
-            AbortFn abort, void* abortUser, BuildResult& result)
+            AbortFn abort, void* abortUser, BuildResult& result,
+            PackProgressFn onProgress, void* progressUser)
         {
             // Counted, so binding here inside a host thread that already bound
             // for its overlay does not take the factory away from it on exit.
@@ -465,13 +538,19 @@ namespace jl {
             bool  wroteFailed = false;
             bool  stop = false;
 
+            // The previous frame's quality, which is where the next frame's
+            // search starts. See EncodeJpegToFit: it is worth about half the
+            // encodes on a run, and changes nothing about the answer.
+            int hint = -1;
+
             while (!stop && detail::ReadRawFrame(pipe, raw.data(), rawBytes)) {
                 if (abort && abort(abortUser)) { result.cancelled = true; break; }
 
                 int step = 0, encodes = 0;
                 const bool fits = detail::EncodeJpegToFit(raw.data(), ceilingStep,
-                    frameBudget, kMaxJpegBytes, frame, step, encodes);
+                    frameBudget, kMaxJpegBytes, frame, step, encodes, hint);
                 result.encodes += encodes;
+                if (fits && step >= 0) hint = step;
 
                 // Either the encoder failed or this frame will not fit at any
                 // quality the ladder offers. A frame the panel would refuse must
@@ -503,6 +582,10 @@ namespace jl {
                 DWORD now = GetTickCount();
                 if (now - lastPrint >= 250) {
                     lastPrint = now;
+
+                    if (onProgress)
+                        onProgress(result.index.size(), sink.offset, progressUser);
+
                     Log(LogLevel::Progress,
                         L"  preprocessing: %zu frames, %llu MB, quality %d%%, %.1fs",
                         result.index.size(),
@@ -511,7 +594,32 @@ namespace jl {
                 }
             }
 
+            // ffmpeg's exit code decides whether this pack is the whole video,
+            // and nothing else can. Reading to end of stream is not proof of
+            // completeness: a decoder that dies halfway closes the pipe in
+            // exactly the way one that finished does, and the pack left behind
+            // then plays the first part of the song and "ends" — which from the
+            // sofa is indistinguishable from a video that is simply too short,
+            // and which the disk cache would replay forever.
+            //
+            // It went unnoticed while builds ran with nothing else on the
+            // panel. Building behind a video that is already playing gives the
+            // two ffmpegs something to fall out over, and then it matters.
+            DWORD exitCode = 0;
+            if (pipe.process) {
+                WaitForSingleObject(pipe.process, 5000);
+                GetExitCodeProcess(pipe.process, &exitCode);
+            }
+
             pipe.Close();
+
+            if (!result.cancelled && exitCode != 0 && exitCode != STILL_ACTIVE) {
+                Log(LogLevel::Warn,
+                    L"ffmpeg exited with code %lu partway through - the pack would be "
+                    L"short, so it is not being kept", exitCode);
+                return false;
+            }
+
             return !wroteFailed;
         }
 
@@ -621,7 +729,16 @@ namespace jl {
         HANDLE h = CreateFileW(path.c_str(), GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (h == INVALID_HANDLE_VALUE) return false;
+        if (h == INVALID_HANDLE_VALUE) {
+            // Not being there is the ordinary answer and says nothing. Being
+            // there and refusing to open is worth hearing about: it means
+            // something in this process still has it, and the caller that just
+            // wrote it is about to be told only that it "would not load".
+            const DWORD err = GetLastError();
+            if (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND)
+                Log(LogLevel::Warn, L"the pack file would not open (error %lu)", err);
+            return false;
+        }
 
         LARGE_INTEGER size{};
         if (!GetFileSizeEx(h, &size) || size.QuadPart < (LONGLONG)sizeof(PackHeader)) {
@@ -635,21 +752,31 @@ namespace jl {
         const uint8_t* view = (const uint8_t*)MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0);
         if (!view) { CloseHandle(m); CloseHandle(h); return false; }
 
+        int failedAt = 0;
         auto fail = [&] {
             UnmapViewOfFile(view);
             CloseHandle(m);
             CloseHandle(h);
+
+            // Numbered rather than described: this runs on every speculative
+            // adopt, and the number is enough to find the line.
+            if (failedAt)
+                Log(LogLevel::Warn, L"the pack file failed check %d", failedAt);
             return false;
         };
 
         PackHeader head{};
         memcpy(&head, view, sizeof(head));
 
+        // 1 is the unstamped magic of a build that never finished, and is the
+        // one expected failure here; it is left unnumbered so it stays quiet.
         if (memcmp(head.magic, "JLP1", 4) != 0)    return fail();
-        if (head.version != kPackVersion)          return fail();
-        if (head.width != kPanelWidth)             return fail();
-        if (head.height != kPanelHeight)           return fail();
-        if (head.frameCount == 0)                  return fail();
+
+        failedAt = 2; if (head.version != kPackVersion)  return fail();
+        failedAt = 3; if (head.width != kPanelWidth)     return fail();
+        failedAt = 4; if (head.height != kPanelHeight)   return fail();
+        failedAt = 5; if (head.frameCount == 0)          return fail();
+        failedAt = 0;
 
         // The digest is in the filename too, and the filename is how this was
         // found. Checking both means a half-written or renamed file cannot be
@@ -660,11 +787,14 @@ namespace jl {
         if (slash != std::wstring::npos && dot != std::wstring::npos && dot > slash) {
             for (size_t i = slash + 1; i < dot; ++i) stem += (char)(path[i] & 0xFF);
         }
+        failedAt = 6;
         if (stem.size() != 16 || memcmp(head.key, stem.data(), 16) != 0) return fail();
 
         const uint64_t indexBytes = (uint64_t)head.frameCount * sizeof(PackIndexEntry);
-        if (head.indexOffset < sizeof(PackHeader)) return fail();
+        failedAt = 7; if (head.indexOffset < sizeof(PackHeader)) return fail();
+        failedAt = 8;
         if (head.indexOffset + indexBytes > (uint64_t)size.QuadPart) return fail();
+        failedAt = 9;
 
         std::vector<Ref> index;
         index.reserve(head.frameCount);
@@ -692,7 +822,8 @@ namespace jl {
     // -----------------------------------------------------------------------
 
     bool GetPack(const std::wstring& path, const RenderOpts& opts, Preprocess mode,
-        FramePack& pack, AbortFn abort, void* abortUser, PackStats* stats)
+        FramePack& pack, AbortFn abort, void* abortUser, PackStats* stats,
+        bool adoptOnly, PackProgressFn onProgress, void* progressUser)
     {
         auto aborted = [&] { return abort && abort(abortUser); };
 
@@ -746,6 +877,10 @@ namespace jl {
             return true;
         }
 
+        // Asked for what is already built and it is not there. Saying so is
+        // the whole point: the caller has somewhere better to do this.
+        if (adoptOnly) return false;
+
         const DWORD began = GetTickCount();
         if (perFrame)
             Log(LogLevel::Info,
@@ -760,9 +895,10 @@ namespace jl {
         auto build = [&](Sink& sink, size_t budget) {
             return perFrame
                 ? RunBuildPerFrame(ffmpeg, path, filter, resolved.hwaccel, resolved.fps,
-                    ceiling, frameBudget, sink, budget, abort, abortUser, result)
+                    ceiling, frameBudget, sink, budget, abort, abortUser, result,
+                    onProgress, progressUser)
                 : RunBuild(ffmpeg, path, filter, resolved.hwaccel, resolved.fps, quality,
-                    sink, budget, abort, abortUser, result);
+                    sink, budget, abort, abortUser, result, onProgress, progressUser);
         };
 
         if (mode == Preprocess::Memory) {
@@ -797,26 +933,47 @@ namespace jl {
             }
         }
         else {
-            // Written under a temporary name and moved into place, so a crash or
-            // a cancel partway through cannot leave something that looks like a
-            // finished pack.
-            wchar_t suffix[32];
-            _snwprintf_s(suffix, _countof(suffix), _TRUNCATE, L".%lu.tmp", GetCurrentProcessId());
-            const std::wstring tempPath = packPath + suffix;
-
-            FILE* f = nullptr;
-#ifdef _MSC_VER
-            if (_wfopen_s(&f, tempPath.c_str(), L"wb") != 0 || !f) {
-#else
-            f = _wfopen(tempPath.c_str(), L"wb");
+            // Written straight to its final name, and made valid only by the
+            // last write to it.
+            //
+            // The magic goes in at the end, so a build that crashes, is
+            // cancelled or is killed leaves a file whose first four bytes are
+            // zero — which AdoptFile rejects, exactly as it rejects anything
+            // else that is not a pack. That is the same guarantee writing to a
+            // temporary name and renaming it gave, without the rename.
+            //
+            // The rename is worth being rid of. It failed here with
+            // ERROR_SHARING_VIOLATION for 32 seconds at a stretch and cost
+            // every large pack that was built — around a minute of encoding
+            // each, thrown away at the last step — while small ones went
+            // through untouched. The temporary name carried the process id and
+            // nothing else, so any two builds of one video in one process
+            // shared it, and the second to open it held the first's file while
+            // the first tried to move it. Nothing here needs that file to
+            // exist.
+            // Both flags here are load-bearing, and between them they are the
+            // answer to a failure that cost every large pack this machine built.
+            //
+            // "N" is no-inherit, and it is the important one. This file is
+            // opened before build() spawns ffmpeg, and StartFfmpegPipe creates
+            // that child with handle inheritance on — so ffmpeg was being
+            // handed a duplicate of the handle to the pack. Our own fclose then
+            // released nothing that mattered: the child held the file until it
+            // exited, and the adopt at the end of this function got
+            // ERROR_SHARING_VIOLATION from what looked like nowhere. Small packs
+            // came out fine because ffmpeg had already gone by then, which is
+            // what made it look like a size limit or a virus scanner.
+            //
+            // _SH_DENYWR then lets readers in and keeps other writers out,
+            // which is the sharing this actually wants — and is what
+            // _wfopen_s, whose handles are not shareable at all, would not give.
+            FILE* f = _wfsopen(packPath.c_str(), L"wbN", _SH_DENYWR);
             if (!f) {
-#endif
                 Log(LogLevel::Warn, L"could not write a pack file - streaming instead");
                 return false;
             }
 
             PackHeader head{};
-            memcpy(head.magic, "JLP1", 4);
             head.version = kPackVersion;
             head.fps = (uint32_t)resolved.fps;
             head.width = kPanelWidth;
@@ -855,6 +1012,9 @@ namespace jl {
             }
 
             if (good) {
+                // Stamped last, and this is the moment the file becomes a pack.
+                memcpy(head.magic, "JLP1", 4);
+
                 fseek(f, 0, SEEK_SET);
                 good = fwrite(&head, 1, sizeof(head), f) == sizeof(head);
             }
@@ -862,16 +1022,11 @@ namespace jl {
             fclose(f);
 
             if (!good) {
-                DeleteFileW(tempPath.c_str());
+                DeleteFileW(packPath.c_str());
                 if (result.cancelled || aborted()) return false;
-                Log(LogLevel::Warn, L"could not finish the pack - streaming instead");
-                return false;
-            }
-
-            DeleteFileW(packPath.c_str());
-            if (!MoveFileW(tempPath.c_str(), packPath.c_str())) {
-                DeleteFileW(tempPath.c_str());
-                Log(LogLevel::Warn, L"could not store the pack - streaming instead");
+                Log(LogLevel::Warn,
+                    L"could not finish the pack after %zu frames - streaming instead",
+                    result.index.size());
                 return false;
             }
 
@@ -922,7 +1077,8 @@ namespace jl {
         PlaybackStats* stats,
         SeekFn takeSeek, void* seekUser,
         PositionFn onPosition, void* positionUser,
-        const Compositor* comp)
+        const Compositor* comp,
+        double startSeconds)
     {
         auto aborted = [&] { return abort && abort(abortUser); };
 
@@ -961,10 +1117,23 @@ namespace jl {
         const int    fps = pack.Fps() > 0 ? pack.Fps() : 30;
         const double duration = (double)pack.FrameCount() / fps;
 
+        // Where the first pass begins. Joining a song already in progress is
+        // the music follower's normal case, and against a pack it costs an
+        // index — no keyframe to land on, no ffmpeg to restart, and it is exact
+        // rather than near.
+        size_t startFrame = 0;
+        if (startSeconds > 0.0) {
+            const double clamped = startSeconds > duration ? duration : startSeconds;
+            startFrame = (size_t)(clamped * fps);
+            if (startFrame >= pack.FrameCount()) startFrame = pack.FrameCount() - 1;
+
+            Log(LogLevel::Info, L"starting at %.1fs (frame %zu)", clamped, startFrame);
+        }
+
         while (running) {
             ++passes;
 
-            for (size_t i = 0; i < pack.FrameCount() && running; ++i) {
+            for (size_t i = startFrame; i < pack.FrameCount() && running; ++i) {
                 if (aborted()) { running = false; break; }
 
                 // The frames are already built and evenly spaced, so a seek is
@@ -972,10 +1141,17 @@ namespace jl {
                 if (takeSeek) {
                     const double want = takeSeek(seekUser);
                     if (want >= 0.0) {
-                        const double clamped = want < 0.0 ? 0.0
-                            : (want > duration ? duration : want);
-                        size_t target = (size_t)(clamped * fps);
-                        if (target >= pack.FrameCount()) target = pack.FrameCount() - 1;
+                        const size_t target = (size_t)(want * fps);
+
+                        // Past the end is not a seek, it is the end. Clamping it
+                        // to the last frame is what made a video shorter than
+                        // the song it was following replay its final moment over
+                        // and over: the follower kept asking for a position the
+                        // video does not have, and every ask landed on the same
+                        // frame. Ending here says so once, and the caller shows
+                        // the card instead.
+                        if (target >= pack.FrameCount()) { running = false; break; }
+
                         i = target;
                     }
                 }
@@ -1007,6 +1183,10 @@ namespace jl {
                         sent, secs > 0 ? sent / secs : 0.0);
                 }
             }
+
+            // A lap that began part-way through has finished the video; the
+            // next one starts at the top.
+            startFrame = 0;
 
             if (!opts.loop || aborted()) running = false;
         }

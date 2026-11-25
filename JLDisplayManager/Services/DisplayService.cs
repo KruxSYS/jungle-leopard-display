@@ -353,24 +353,18 @@ public sealed class DisplayService : INotifyPropertyChanged, IDisposable
     /// Rotation and stretch come from the settings as they do for a video,
     /// because unlike the card's backdrop this is a picture with a right way up.
     /// </summary>
-    public bool PlayStream(string url, string inputArgs, double startSeconds, double duration)
+    /// <param name="quality">
+    /// An explicit -q:v from <see cref="Calibrate"/>, or 0 to leave the core to
+    /// its own figure. Worth passing whenever the "stream" is really a local
+    /// file: the guess drops the frames it makes too big, and the panel skips.
+    /// </param>
+    public bool PlayStream(string url, string inputArgs, double startSeconds, double duration,
+                           int quality = 0)
     {
         if (!Connected) return false;
         if (string.IsNullOrWhiteSpace(url)) return false;
 
-        var opts = new NativeMethods.JlRenderOpts
-        {
-            Stretch = _settings.Stretch ? 1 : 0,
-            Rotate = _settings.Rotate,
-            Fps = _settings.Fps,
-            Quality = 0,
-            Loop = 0,
-            Recalibrate = 0,
-            PerFrameQuality = 0,
-            QualityCeiling = _settings.QualityCeiling,
-            ByteRate = (uint)(_settings.ByteRateKBs * 1024),
-            Hwaccel = _settings.Hwaccel,
-        };
+        NativeMethods.JlRenderOpts opts = StreamOpts(quality);
 
         Current = null;
 
@@ -407,6 +401,125 @@ public sealed class DisplayService : INotifyPropertyChanged, IDisposable
             ByteRate = (uint)(_settings.ByteRateKBs * 1024),
             Hwaccel = _settings.Hwaccel,
         };
+    }
+
+    /// <summary>
+    /// The options a followed video is played with — and, because they are part
+    /// of what a pack is, the options it has to be preprocessed with as well.
+    ///
+    /// One builder for both callers on purpose. The pack cache keys on these,
+    /// so a single field differing between the build and the play would leave
+    /// playback hunting for a pack nobody built and quietly transcoding
+    /// instead.
+    /// </summary>
+    private NativeMethods.JlRenderOpts StreamOpts(int quality) =>
+        new()
+        {
+            Stretch = _settings.Stretch ? 1 : 0,
+            Rotate = _settings.Rotate,
+            Fps = _settings.Fps,
+            Quality = quality >= 2 && quality <= 31 ? quality : 0,
+            Loop = 0,
+            Recalibrate = 0,
+            PerFrameQuality = _settings.PerFrameQuality ? 1 : 0,
+            QualityCeiling = _settings.QualityCeiling,
+            ByteRate = (uint)(_settings.ByteRateKBs * 1024),
+            Hwaccel = _settings.Hwaccel,
+        };
+
+    /// <summary>
+    /// Builds a downloaded video's frames into the pack cache, so playing it
+    /// runs no ffmpeg at all — the same preprocessing the library gets, for the
+    /// one item that never had it.
+    ///
+    /// Blocking, and tens of seconds the first time: call it from a background
+    /// thread. It touches no device state and takes no session lock, so it is
+    /// safe while something else is playing.
+    ///
+    /// False when there is nothing to adopt afterwards — preprocessing switched
+    /// off, no ffmpeg, a cache that would not take it — and playback then falls
+    /// back to transcoding as it always did.
+    /// </summary>
+    public bool Preprocess(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        if (_settings.Preprocess == PreprocessMode.Off) return false;
+
+        // Quality 0 deliberately: naming a -q:v turns per-frame quality off in
+        // the builder, and per-frame is the mode that budgets bytes a second
+        // rather than aiming at a per-frame cap.
+        NativeMethods.JlRenderOpts opts = StreamOpts(0);
+
+        return NativeMethods.jl_preprocess(path, ref opts) == NativeMethods.JL_OK;
+    }
+
+    /// <summary>
+    /// Whether playing this file would find preprocessed frames waiting. Cheap:
+    /// it looks, it does not build.
+    /// </summary>
+    public bool PackReady(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        if (_settings.Preprocess == PreprocessMode.Off) return false;
+
+        NativeMethods.JlRenderOpts opts = StreamOpts(0);
+
+        return NativeMethods.jl_pack_ready(path, ref opts) == NativeMethods.JL_OK;
+    }
+
+    /// <summary>
+    /// Frames built so far by the <see cref="Preprocess"/> call in flight, or -1
+    /// when there is none. Polled rather than pushed: the build runs in the core
+    /// on a thread that has no business touching the UI.
+    /// </summary>
+    public int PreprocessFrames => NativeMethods.jl_preprocess_frames();
+
+    /// <summary>
+    /// Why the last preprocess ended the way it did, or null when it had
+    /// nothing to say. Worth logging on failure: without it a build that came
+    /// to nothing is completely silent.
+    /// </summary>
+    public string? PreprocessMessage
+    {
+        get
+        {
+            var sb = new StringBuilder(512);
+            return NativeMethods.jl_preprocess_message(sb, sb.Capacity) == NativeMethods.JL_OK
+                ? sb.ToString()
+                : null;
+        }
+    }
+
+    /// <summary>
+    /// Surveys a video for the -q:v whose worst frame still fits under the
+    /// panel's cap, and caches the answer against the file — so this is paid
+    /// once per file and a later play is instant.
+    ///
+    /// Blocking, and on a long video that is tens of seconds: call it from a
+    /// background thread. It touches no device state and takes no session lock,
+    /// so it is safe while something else is playing.
+    /// </summary>
+    /// <returns>The -q:v, or 0 when it could not be worked out.</returns>
+    public int Calibrate(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return 0;
+
+        var opts = new NativeMethods.JlRenderOpts
+        {
+            Stretch = _settings.Stretch ? 1 : 0,
+            Rotate = _settings.Rotate,
+            Fps = _settings.Fps,
+            Quality = 0,                       // 0 is what asks for a survey
+            Loop = 0,
+            Recalibrate = 0,
+            PerFrameQuality = 0,
+            QualityCeiling = _settings.QualityCeiling,
+            ByteRate = (uint)(_settings.ByteRateKBs * 1024),
+            Hwaccel = _settings.Hwaccel,
+        };
+
+        int rc = NativeMethods.jl_calibrate(path, ref opts);
+        return rc >= 2 && rc <= 31 ? rc : 0;
     }
 
     public string? DeviceInfo()

@@ -177,6 +177,11 @@ extern "C" {
     // material for the caches, and a URL that changes every play would poison
     // them.
     //
+    // `opts->quality` is honoured here as an explicit -q:v: a stream cannot be
+    // surveyed, but a caller holding a calibrated figure for the same source
+    // (see jl_calibrate) can hand it over rather than leave this to the
+    // built-in guess. 0 takes the guess.
+    //
     // `startSeconds` joins a source already in progress; `durationSeconds` is
     // how long it runs, which the caller knows and ffprobe would cost a request
     // to ask. Both may be 0.
@@ -186,6 +191,30 @@ extern "C" {
     JLAPI int32_t jl_play_stream(const wchar_t* url, const wchar_t* inputArgs,
         double startSeconds, double durationSeconds,
         const JlRenderOpts* opts);
+
+    // Builds this file's frames into the on-disk pack cache without touching
+    // the device, so playing it later starts immediately and runs no ffmpeg.
+    // Needs no open session, blocks for as long as the build takes, and is safe
+    // on a background thread while something else is playing.
+    //
+    // The render options must be the ones playback will use — they are part of
+    // what the frames are, and a pack built under different ones is a different
+    // pack. JL_OK when the cache holds a pack for them afterwards.
+    JLAPI int32_t jl_preprocess(const wchar_t* path, const JlRenderOpts* opts);
+
+    // Whether playing this file with these options would find a pack waiting,
+    // without building one. JL_OK when it would.
+    JLAPI int32_t jl_pack_ready(const wchar_t* path, const JlRenderOpts* opts);
+
+    // How many frames the jl_preprocess call in flight has built, or -1 when
+    // there is none. Poll it to show progress: a caller that knows how long the
+    // source runs turns it into a percentage — frames / (seconds * fps).
+    JLAPI int32_t jl_preprocess_frames(void);
+
+    // The last warning or error from the most recent jl_preprocess, which is
+    // the only account of why one failed: its thread's log sink is separate
+    // from playback's so a build cannot overwrite what the panel is saying.
+    JLAPI int32_t jl_preprocess_message(wchar_t* buf, int32_t cch);
 
     // Surveys a video and caches the result without touching the device, so
     // pressing play later is instant. Needs no open session.

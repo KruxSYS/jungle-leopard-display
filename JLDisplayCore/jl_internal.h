@@ -205,8 +205,13 @@ namespace jl {
         // still fits `target`. Falls back to the floor when nothing fits, and
         // fails only if even that is over `hardCap`. `encodes` reports what the
         // search cost.
+        //
+        // `hintStep` is where to start looking — pass the previous frame's
+        // answer, or -1 for none. It changes what the search costs and never
+        // what it finds.
         bool EncodeJpegToFit(const uint8_t* bgr, int ceilingStep, size_t target,
-            size_t hardCap, std::vector<uint8_t>& out, int& usedStep, int& encodes);
+            size_t hardCap, std::vector<uint8_t>& out, int& usedStep, int& encodes,
+            int hintStep = -1);
 
         // -------------------------------------------------------------------
         // Calibration cache

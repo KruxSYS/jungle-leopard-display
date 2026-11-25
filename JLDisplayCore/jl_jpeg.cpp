@@ -188,7 +188,8 @@ namespace jl {
         // most frames fit there: that makes the common case one encode and only
         // a frame that actually needs the search pays for it.
         bool EncodeJpegToFit(const uint8_t* bgr, int ceilingStep, size_t target,
-            size_t hardCap, std::vector<uint8_t>& out, int& usedStep, int& encodes)
+            size_t hardCap, std::vector<uint8_t>& out, int& usedStep, int& encodes,
+            int hintStep)
         {
             encodes = 0;
             usedStep = -1;
@@ -196,49 +197,103 @@ namespace jl {
             if (ceilingStep < 0) ceilingStep = 0;
             if (ceilingStep >= kLadderSize) ceilingStep = kLadderSize - 1;
 
-            ++encodes;
-            if (!EncodeJpeg(bgr, kLadder[ceilingStep], out)) return false;
-            if (out.size() <= target) {
-                usedStep = ceilingStep;
-                return true;
-            }
-
-            if (ceilingStep == 0) {
-                // Nowhere to search: the probe was already the floor.
-                usedStep = 0;
-                return out.size() <= hardCap;
-            }
+            // Where to start.
+            //
+            // Bisecting the whole ladder from the ceiling costs about six
+            // encodes a frame at a high ceiling, and the first of them is
+            // usually wasted: a 960x480 frame at 98% is nowhere near a 39 KB
+            // budget, so the ceiling probe is a foregone conclusion.
+            //
+            // The previous frame's answer is a far better guess. Consecutive
+            // frames of a video are nearly the same picture and land within a
+            // step or two of each other, so the search starts there, gallops
+            // outwards until it has the answer bracketed, and bisects only what
+            // is left. Two or three encodes a frame in the ordinary case, and
+            // the same answer as before either way: the ladder is monotonic in
+            // size, and this still returns the largest step that fits.
+            int start = hintStep < 0 || hintStep > ceilingStep ? ceilingStep : hintStep;
+            if (start < 0) start = 0;
 
             std::vector<uint8_t> best, probe;
-            int lo = 0, hi = ceilingStep - 1;
+
+            // 1 fits, 0 is over the target, -1 is the encoder failing. A step
+            // that fits and beats what we have keeps its bytes.
+            auto probeStep = [&](int step) -> int {
+                ++encodes;
+                if (!EncodeJpeg(bgr, kLadder[step], probe)) return -1;
+                if (probe.size() > target) return 0;
+                if (step > usedStep) { usedStep = step; best.swap(probe); }
+                return 1;
+            };
+
+            int lo = 0, hi = -1;          // what is left to bisect
+            const int first = probeStep(start);
+            if (first < 0) return false;
+
+            if (first == 1) {
+                if (start == ceilingStep) { out.swap(best); return true; }
+
+                // It fits, so the answer is at or above it. Gallop up until a
+                // step is too big, or the ceiling turns out to fit.
+                int fit = start, gap = 1, over = -1;
+                while (over < 0) {
+                    int step = fit + gap;
+                    if (step > ceilingStep) step = ceilingStep;
+
+                    const int r = probeStep(step);
+                    if (r < 0) return false;
+                    if (r == 0) { over = step; break; }
+
+                    fit = step;
+                    if (step == ceilingStep) break;
+                    gap *= 2;
+                }
+
+                if (over < 0) { out.swap(best); return true; }   // the ceiling fits
+                lo = fit + 1;
+                hi = over - 1;
+            }
+            else {
+                // Too big, so the answer is below it — if there is one at all.
+                int over = start, gap = 1, fit = -1;
+                while (fit < 0 && over > 0) {
+                    int step = over - gap;
+                    if (step < 0) step = 0;
+
+                    const int r = probeStep(step);
+                    if (r < 0) return false;
+                    if (r == 1) { fit = step; break; }
+
+                    over = step;
+                    if (step == 0) break;
+                    gap *= 2;
+                }
+
+                if (fit < 0) {
+                    // Nothing on the ladder fits the target. The floor is the
+                    // best this frame can do; it is still worth sending if the
+                    // panel would take it, and calibration is not in the loop
+                    // to lower it any further.
+                    ++encodes;
+                    if (!EncodeJpeg(bgr, kLadder[0], out)) return false;
+                    usedStep = 0;
+                    return out.size() <= hardCap;
+                }
+
+                lo = fit + 1;
+                hi = over - 1;
+            }
 
             while (lo <= hi) {
                 const int mid = lo + (hi - lo) / 2;
-                ++encodes;
-                if (!EncodeJpeg(bgr, kLadder[mid], probe)) return false;
-
-                if (probe.size() <= target) {
-                    usedStep = mid;
-                    best.swap(probe);
-                    lo = mid + 1;
-                }
-                else {
-                    hi = mid - 1;
-                }
+                const int r = probeStep(mid);
+                if (r < 0) return false;
+                if (r == 1) lo = mid + 1;
+                else hi = mid - 1;
             }
 
-            if (usedStep >= 0) {
-                out.swap(best);
-                return true;
-            }
-
-            // Nothing on the ladder fits the target. The floor is the best this
-            // frame can do; it is still worth sending if the panel would take
-            // it, and calibration is not in the loop to lower it any further.
-            ++encodes;
-            if (!EncodeJpeg(bgr, kLadder[0], out)) return false;
-            usedStep = 0;
-            return out.size() <= hardCap;
+            out.swap(best);
+            return true;
         }
 
     }  // namespace detail

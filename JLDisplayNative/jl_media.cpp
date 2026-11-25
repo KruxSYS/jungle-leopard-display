@@ -266,6 +266,12 @@ namespace {
                 r.artist = artist;
                 r.album = album;
                 r.trackVersion++;
+
+                // A new track gets a new clock, and no inherited length: the
+                // one thing worse than no end time is the previous song's.
+                r.basePositionKnown = false;
+                r.lastReported = -1.0;
+                r.duration = 0.0;
             }
         }
 
@@ -300,13 +306,19 @@ namespace {
         catch (...) {}
 
         double position = 0.0, duration = 0.0;
+
+        // The player's own figures, kept apart from `position` because that one
+        // gets the age added to it below.
+        double reported = 0.0, end = 0.0;
+
         bool known = false;
 
         try {
             auto tl = session.GetTimelineProperties();
             double start = Seconds(tl.StartTime());
-            double end = Seconds(tl.EndTime());
+            end = Seconds(tl.EndTime());
             position = Seconds(tl.Position());
+            reported = position;
             duration = end > start ? end - start : 0.0;
 
             // The report is "the position was P at time T", and T can be
@@ -332,18 +344,91 @@ namespace {
         if (duration > 0.0 && position > duration) position = duration;
         if (position < 0.0) position = 0.0;
 
+        // A timeline that says nothing at all: no end, and a position of zero.
+        //
+        // This is not a rare shape — it is what YouTube Music in Firefox
+        // reports for most tracks — and taking it at face value was wrong in a
+        // way that took a while to see. The position above is then entirely
+        // `age`, the time since the player last stamped its timeline, which
+        // works only for as long as that stamp stands still. Firefox re-stamps
+        // it mid-song, and the moment it does, this reads as the song having
+        // jumped back to about three seconds.
+        //
+        // Downstream that is indistinguishable from the listener dragging the
+        // scrubber to the start, so the follower dutifully hauled the video
+        // back to the beginning, once every couple of minutes, all night. The
+        // log is full of "followed a seek towards the start (3.6s)" that nobody
+        // asked for.
+        //
+        // So a timeline in this state is treated as no information at all. It
+        // is worth one guess when a track is first seen — `age` is genuinely
+        // the best estimate of how far in we are joining — and after that our
+        // own clock carries the position and the player is not allowed to move
+        // it again.
+        const bool degenerate = end <= 0.0 && reported <= 0.0;
+
         Guard g(r.lock);
 
         const bool wasPlaying = r.playing;
+
+        // Where our own clock had got to, worked out before the playing flag
+        // moves underneath it.
+        double carried = r.basePosition;
+        if (r.basePositionKnown && wasPlaying) {
+            const double secs = (double)(NowQpcMs() - r.baseAtMs) / 1000.0;
+            if (secs > 0.0) carried += secs * r.rate;
+        }
+        if (carried < 0.0) carried = 0.0;
+
         r.playing = playing;
         r.rate = rate;
-        r.duration = duration;
+
+        // The length is kept as well as the position, and for the same reason.
+        // A timeline that stops describing itself reports no end either, and
+        // letting that through set the track's length to 0 midway through the
+        // song — measured on the same track ten seconds apart: 113.94, then
+        // nothing. Everything drawn from it went with it, which is the end time
+        // that kept being wrong. A track change clears this; a player that has
+        // gone quiet does not.
+        if (!degenerate || duration > 0.0) r.duration = duration;
 
         if (!known) {
             r.basePositionKnown = false;
             r.lastReported = -1.0;
             return;
         }
+
+        if (degenerate) {
+            // Whether we already have a clock for this track is the whole test,
+            // and it took two goes to get right. Asking instead whether the
+            // clock had been *started* from a timeline like this one missed the
+            // case that actually happens: a track that described itself
+            // perfectly well to begin with and then stopped. That still walked
+            // straight into the re-base, and the position still collapsed.
+            if (!r.basePositionKnown) {
+                // First sight of this track. Straight after a track change
+                // `age` is small, which is exactly right.
+                r.basePosition = position;
+                r.baseAtMs = NowQpcMs();
+            }
+            else if (wasPlaying != playing) {
+                // Only the clock is restarted, never the position: a pause must
+                // not count the time it was paused for, and a resume must not
+                // lose where we were.
+                r.basePosition = carried;
+                r.baseAtMs = NowQpcMs();
+            }
+
+            r.basePositionKnown = true;
+
+            // Nothing credible was reported, so there is nothing to compare
+            // against next time either.
+            r.lastReported = -1.0;
+            return;
+        }
+
+        // A player that describes its timeline properly. Its word is better
+        // than our clock, so the ordinary re-basing below applies.
 
         // Re-base only when the player says something new: a position that
         // actually moved, a pause or resume (the clock must not count time that

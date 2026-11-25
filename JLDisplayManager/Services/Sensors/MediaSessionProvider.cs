@@ -77,11 +77,34 @@ public sealed class MediaSessionProvider : ISensorProvider
         // drawing a row of "--".
         new("music.idle",      "Nothing playing",   "Music", "", 0, 1),
 
-        // The video being fetched for the panel. Always available, so a layer
-        // can be bound to "only while downloading" and stay hidden the rest of
-        // the time rather than drawing an empty bar.
-        new("music.fetching",  "Downloading a video", "Music", "", 0, 1),
-        new("music.fetch",     "Download progress",   "Music", "%", 0, 100),
+        // Getting a video onto the panel: downloading it, then building its
+        // frames. Always available, so a layer can be bound to "only while
+        // working" and stay hidden the rest of the time rather than drawing an
+        // empty bar. The stage says which of the two it is.
+        new("music.fetching",  "Getting a video ready", "Music", "", 0, 1),
+        new("music.fetch",     "Progress",              "Music", "%", 0, 100),
+        new("music.stage",     "What it is doing",      "Music", "", IsText: true),
+    };
+
+    /// <summary>
+    /// Everything that belongs to the track rather than to the machine.
+    ///
+    /// The registry holds whatever it was last told, which is right for a
+    /// temperature and wrong for every one of these: a reading left behind
+    /// describes the song that finished. A 1:33 track length sat on the card
+    /// against a 3:29 song for exactly this reason — the player reported no
+    /// length for the new track, this provider simply published nothing, and
+    /// the old figure stayed both visible and, as far as the visibility rule
+    /// was concerned, available.
+    ///
+    /// So each of these is either published or cleared on every tick. Nothing
+    /// is left to be inherited by the next song.
+    /// </summary>
+    private static readonly string[] TrackSensors =
+    {
+        "music.title", "music.artist", "music.album", "music.source", "music.art",
+        "music.elapsed", "music.length", "music.remaining",
+        "music.position", "music.duration", "music.progress", "music.playing",
     };
 
     public void Poll(ISensorSink sink)
@@ -92,20 +115,32 @@ public sealed class MediaSessionProvider : ISensorProvider
         // happens here is noticing that the version moved.
         MusicArt.Update(m.ThumbnailVersion, m.Present != 0);
 
-        // Before the nothing-playing branch below: a download can still be
+        // Before the nothing-playing branch below: this work can still be
         // running when the music has been paused, and the bar should stay
         // truthful about it.
+        //
+        // Two stages share one bar and one flag. They are the same wait as far
+        // as anybody looking at the panel is concerned — the video is not up
+        // yet — and a card with a bar per stage would be worse, not clearer.
         bool fetching = MusicVideoCache.Fetching;
-        sink.Publish("music.fetching", fetching ? 1 : 0);
-        sink.Publish("music.fetch", fetching ? MusicVideoCache.Progress : 0);
+        bool working = fetching || MusicPrepare.Busy;
+
+        sink.Publish("music.fetching", working ? 1 : 0);
+        sink.Publish("music.fetch", fetching ? MusicVideoCache.Progress
+                                             : MusicPrepare.Busy ? MusicPrepare.Percent : 0);
+
+        if (fetching) sink.PublishText("music.stage", "Fetching video");
+        else if (MusicPrepare.Busy) sink.PublishText("music.stage", MusicPrepare.Stage);
+        else sink.Clear("music.stage");
 
         // Nothing playing publishes exactly one thing: the flag a layer's
-        // visibility rule tests. Everything else stays unavailable, which is
-        // what renders "--" rather than a stale title from an hour ago.
+        // visibility rule tests. Everything else is cleared, which is what
+        // renders "--" rather than a stale title from an hour ago.
         if (m.Present == 0)
         {
             sink.Publish("music.idle", 1);
             sink.PublishText("music.state", "Nothing playing");
+            foreach (string id in TrackSensors) sink.Clear(id);
             return;
         }
 
@@ -113,26 +148,26 @@ public sealed class MediaSessionProvider : ISensorProvider
         sink.Publish("music.playing", m.Playing != 0 ? 1 : 0);
         sink.PublishText("music.state", m.Playing != 0 ? "Playing" : "Paused");
 
-        if (!string.IsNullOrEmpty(m.Title)) sink.PublishText("music.title", m.Title);
-        if (!string.IsNullOrEmpty(m.Artist)) sink.PublishText("music.artist", m.Artist);
-        if (!string.IsNullOrEmpty(m.Album)) sink.PublishText("music.album", m.Album);
-
-        string source = MediaSession.FriendlyName(m.SourceApp);
-        if (!string.IsNullOrEmpty(source)) sink.PublishText("music.source", source);
+        Text(sink, "music.title", m.Title);
+        Text(sink, "music.artist", m.Artist);
+        Text(sink, "music.album", m.Album);
+        Text(sink, "music.source", MediaSession.FriendlyName(m.SourceApp));
 
         // A path rather than a picture: an ImageLayer's file is a template, so
         // "{music.art}" in one is how the current track's cover reaches the
-        // panel. Unavailable when the track has no art, which draws nothing
-        // rather than the previous track's cover.
-        string? art = MusicArt.ArtPath;
-        if (!string.IsNullOrEmpty(art)) sink.PublishText("music.art", art);
+        // panel. Cleared when the track has no art, which draws nothing rather
+        // than the previous track's cover.
+        Text(sink, "music.art", MusicArt.ArtPath);
 
         sink.Publish("music.position", m.Position);
         sink.PublishText("music.elapsed", Clock(m.Position));
 
         // A player that does not report a length leaves the length, the
         // remaining time and the progress bar unavailable rather than showing
-        // a bar that is always empty or a countdown from zero.
+        // a bar that is always empty or a countdown from zero. Firefox reports
+        // none at all for some tracks, so this is a normal tick and not an
+        // error — and clearing is what keeps the last song's length off the
+        // panel while this one plays.
         if (m.Duration > 0)
         {
             sink.Publish("music.duration", m.Duration);
@@ -140,6 +175,20 @@ public sealed class MediaSessionProvider : ISensorProvider
             sink.PublishText("music.remaining", "-" + Clock(Math.Max(0, m.Duration - m.Position)));
             sink.Publish("music.progress", Math.Clamp(m.Position / m.Duration * 100.0, 0, 100));
         }
+        else
+        {
+            sink.Clear("music.duration");
+            sink.Clear("music.length");
+            sink.Clear("music.remaining");
+            sink.Clear("music.progress");
+        }
+    }
+
+    /// <summary>Publishes a text reading, or clears it when there is nothing to say.</summary>
+    private static void Text(ISensorSink sink, string id, string? value)
+    {
+        if (string.IsNullOrEmpty(value)) sink.Clear(id);
+        else sink.PublishText(id, value);
     }
 
     /// <summary>

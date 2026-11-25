@@ -17,6 +17,22 @@ public interface ISensorSink
     /// Never smoothed, and formatted by whoever produced it.
     /// </summary>
     void PublishText(string id, string text);
+
+    /// <summary>
+    /// Says this source has nothing to report right now, so a layer bound to it
+    /// draws "--" or hides itself rather than showing what it read last.
+    ///
+    /// The counterpart to the rule in <see cref="ISensorProvider.Poll"/> that
+    /// anything not published keeps its previous value. Holding is right for a
+    /// temperature — the last one is still roughly true — and wrong for
+    /// anything belonging to one track, one file or one session: the length of
+    /// the song that finished is not the length of the song now playing, and
+    /// left behind it sits on the panel against the wrong title.
+    ///
+    /// A provider whose readings are of that kind must clear what it cannot
+    /// report on a tick, not simply skip it.
+    /// </summary>
+    void Clear(string id);
 }
 
 /// <summary>
@@ -53,7 +69,8 @@ public interface ISensorProvider : IDisposable
     /// <summary>
     /// Reads current values into <paramref name="sink"/>. Called on a pool
     /// thread at the configured interval. Anything not published this tick keeps
-    /// its previous value.
+    /// its previous value — see <see cref="ISensorSink.Clear"/> for when that is
+    /// the wrong answer and what to do instead.
     /// </summary>
     void Poll(ISensorSink sink);
 }

@@ -444,6 +444,13 @@ and, as numbers for bars and visibility rules, `music.position`,
 be pointed at — that is how the card shows album art, and it works in any
 profile you build yourself.
 
+Every one of these belongs to the track and none of them is inherited by the
+next one. A player that reports no length — YouTube Music in a browser often
+does not — leaves `{music.length}`, `{music.remaining}` and `music.progress`
+with nothing to say, so a layer bound to one hides itself and a token reads
+`--`. It does **not** show the length of the song that finished, which is what
+it used to do: a 1:33 track length sat on the card against a 3:29 song.
+
 ### Finding the video
 
 The media session reports a title, an artist and usually a length. It never
@@ -476,6 +483,31 @@ scrubber, are both only possible because of that.
 It also settles the quality question: the whole 720p rung comes down at whatever
 rate the link allows, rather than being decoded live from a throttled
 connection.
+
+And because it is a file, it is **preprocessed** like anything in the library.
+Its frames are built once into the pack cache — at whatever **Settings →
+Preprocessing** is set to — and the panel then plays those frames with no ffmpeg
+involved at all.
+
+That is what stops a music video skipping. A live stream has to commit to one
+JPEG quality up front, and it is a guess: a busy video makes frames too big for
+the panel, and those are dropped rather than sent. Preprocessed frames are
+budgeted against the panel's data rate one at a time, so none of them can be.
+Following the song gets sharper too, because a seek into preprocessed frames is
+an index rather than ffmpeg restarted on the nearest keyframe.
+
+**The video does not wait for that.** It starts as soon as it is downloaded, and
+its frames are built behind it — at low priority, one song at a time — with the
+progress shown on the card under the track, on the same bar the download uses.
+When the build finishes the panel swaps onto the frames for the rest of the song,
+and every later play of it starts from them. A song skipped past is left unbuilt
+until it comes round again.
+
+Building a new song takes up to a minute. It is not free on disk either: reckon
+about 200 MB for a three-minute track, in the same cache the library's videos
+use, oldest-unplayed evicted first. With preprocessing switched off, a followed
+video is instead surveyed for a quality whose worst frame still fits, and
+streamed as before.
 
 **Settings → Music** caps how long a video may be before it is worth fetching
 at all — a search for a song reliably turns up an hour of it on loop, and that

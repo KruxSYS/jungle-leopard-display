@@ -190,11 +190,15 @@ public sealed class OverlaySettings
     private static readonly Guid FetchBarId = new("6d757369-6302-4000-8000-6e6f77706c79");
 
     /// <summary>
-    /// The line that says a video is being fetched, and the bar under it.
+    /// The line that says a video is being got ready, and the bar under it.
     ///
-    /// Both are bound to <c>music.fetching</c> and so are invisible unless a
-    /// download is actually running — which is most of the time, since a track
-    /// heard before plays from the cache with no fetch at all.
+    /// Both are bound to <c>music.fetching</c> and so are invisible unless
+    /// something is actually being done — which is most of the time, since a
+    /// track heard before is already downloaded and already built.
+    ///
+    /// The label takes its wording from <c>{music.stage}</c> rather than
+    /// spelling out "Fetching", because there are two waits behind it: the
+    /// download, and building the video's frames.
     /// </summary>
     private static TextLayer FetchText() => new()
     {
@@ -202,7 +206,7 @@ public sealed class OverlaySettings
         Name = "Fetching label",
         Anchor = LayerAnchor.MiddleLeft,
         X = 356, Y = 136, Width = 552, Height = 22,
-        Template = "Fetching video  {music.fetch:0}%",
+        Template = "{music.stage}  {music.fetch:0}%",
         FontSize = 15,
         Bold = false,
         Colour = "dim",

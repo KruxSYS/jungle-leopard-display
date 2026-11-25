@@ -164,6 +164,17 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
     private const double MinPlausibleVideoSeconds = 75.0;
 
     /// <summary>
+    /// How long after a video runs out the song has to still be playing before
+    /// the match is written off as too short.
+    ///
+    /// A video ending at the same moment as the song is the correct case, and
+    /// the track change that follows it takes a beat to arrive. Anything longer
+    /// than that beat and the song is genuinely still going, which a recording
+    /// of that song would not have run out of.
+    /// </summary>
+    private static readonly TimeSpan VideoEndedGrace = TimeSpan.FromSeconds(3);
+
+    /// <summary>
     /// How long to wait for the track's length to arrive before resolving
     /// without it.
     ///
@@ -230,6 +241,34 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
     private CancellationTokenSource? _resolve;
     private DateTime _lastCorrection = DateTime.MinValue;
     private int _driftStreak;
+
+    /// <summary>
+    /// The video whose frames are being built, or null. Guarded because it is
+    /// written from the thread doing the building and read from the tick.
+    /// </summary>
+    private readonly object _packLock = new();
+    private string? _packing;
+    private double _packSeconds;
+
+    /// <summary>How long the video now playing runs, so it is known where its end is.</summary>
+    private double _streamingSeconds;
+
+    /// <summary>
+    /// A track whose video has been found too short to follow it. The card
+    /// stays up for the rest of the song rather than the video being started
+    /// again from a position it does not have.
+    /// </summary>
+    private int _exhaustedTrack = -1;
+
+    /// <summary>
+    /// A video that has just run out, held for <see cref="VideoEndedGrace"/>
+    /// before anything is concluded from it. A video ending is normal — songs
+    /// end — and only a song that carries on afterwards says the match was
+    /// wrong.
+    /// </summary>
+    private int _endedTrack = -1;
+    private DateTime _endedAt = DateTime.MinValue;
+    private double _endedSeconds;
     private DateTime _streamStartedAt = DateTime.MinValue;
     private DateTime _trackSeenAt = DateTime.MinValue;
     private int _seenTrack = -1;
@@ -375,6 +414,13 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
         NativeMethods.JlMediaStatus m = MediaSession.Read();
         Summary = Describe(m);
 
+        // Before anything below that returns early: a build outlives the track
+        // that started it, and its progress has to keep being reported whatever
+        // the panel is doing.
+        UpdatePackProgress();
+
+        JudgeEndedVideo(m);
+
         SweepCacheIfDue(force: false);
 
         int art = MusicArt.Version;
@@ -452,11 +498,27 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
             // network: it fails to connect and exits, and nothing else in the
             // app would ever say so.
             bool played = _display.FramesSent > 0;
+            string? file = _streamingFile;
+            double ranFor = _streamingSeconds;
+            int endedVersion = _streamingTrack;
 
             LeaveVideo();
 
-            if (played) Detail = "Video ended";
-            else ReportDeadVideo(_streamingFile);
+            if (played)
+            {
+                Detail = "Video ended";
+
+                // Not restarted. The song is still playing and the video has no
+                // more of it, so starting it again could only play the wrong
+                // part — which is what it used to do, from the top, while the
+                // song was two minutes in. JudgeEndedVideo decides whether the
+                // match was simply too short.
+                _exhaustedTrack = endedVersion;
+                _endedTrack = endedVersion;
+                _endedAt = DateTime.UtcNow;
+                _endedSeconds = ranFor;
+            }
+            else ReportDeadVideo(file);
 
             ShowCard();
             return;
@@ -496,6 +558,7 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
     {
         _streamingTrack = -1;
         _streamingFile = null;
+        _streamingSeconds = 0;
         _showing = Showing.Nothing;
         _shownPath = null;
     }
@@ -514,6 +577,7 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
     private void BeginPrepare(NativeMethods.JlMediaStatus m)
     {
         if (_resolvingTrack == m.TrackVersion) return;   // already working on it
+        if (_exhaustedTrack == m.TrackVersion) return;   // its video cannot follow it
         if (string.IsNullOrWhiteSpace(m.Title)) return;  // nothing to search for
 
         // Give the length a moment to arrive before searching without it. It
@@ -543,10 +607,10 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
 
         double maxSeconds = _settings.MusicMaxVideoMinutes * 60.0;
 
-        Task.Run<(string? File, double Seconds)>(() =>
+        Task.Run<(string? File, double Seconds, int Quality)>(() =>
         {
             VideoMatch? match = TrackResolver.Resolve(title, artist, duration, maxSeconds, token);
-            if (match == null) return (null, 0);
+            if (match == null) return (null, 0, 0);
 
             // Before the download, not after it. The length is known from the
             // search, and the fetch is the only expensive part of this — an
@@ -560,13 +624,15 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
             {
                 Storage.Log($"music: skipped the video for \"{title}\" - it runs " +
                             $"{match.Seconds / 60:0.#} min against a {maxSeconds / 60:0.#} min limit");
-                return (null, match.Seconds);
+                return (null, match.Seconds, 0);
             }
 
             token.ThrowIfCancellationRequested();
 
-            // Already downloaded: nothing to report, it is about to play.
-            if (MusicVideoCache.Existing(match.Id) is { } have) return (have, match.Seconds);
+            // Already downloaded: nothing to fetch, though it still has to be
+            // made ready — which for a video played before is a lookup.
+            if (MusicVideoCache.Existing(match.Id) is { } have)
+                return (have, match.Seconds, Prepare(have, match.Seconds, version));
 
             _dispatcher.BeginInvoke(() =>
             {
@@ -581,21 +647,269 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
                 });
             }, token);
 
-            return (file, match.Seconds);
+            return (file, match.Seconds,
+                    file == null ? 0 : Prepare(file, match.Seconds, version));
         }, token)
             .ContinueWith(t =>
             {
                 if (t.IsCanceled || token.IsCancellationRequested) return;
 
-                (string? file, double seconds) = t.IsFaulted ? (null, 0d) : t.Result;
+                (string? file, double seconds, int quality) =
+                    t.IsFaulted ? (null, 0d, 0) : t.Result;
                 if (t.IsFaulted)
                     Storage.Log($"music: preparing \"{title}\" failed: {t.Exception?.GetBaseException().Message}");
 
-                _dispatcher.BeginInvoke(() => OnPrepared(version, file, seconds, title, artist));
+                _dispatcher.BeginInvoke(() =>
+                    OnPrepared(version, file, seconds, quality, title, artist));
             }, TaskScheduler.Default);
     }
 
-    private void OnPrepared(int version, string? file, double videoSeconds,
+    /// <summary>
+    /// Makes a downloaded video ready to play, on the prepare thread and before
+    /// the panel is asked for anything. Returns the -q:v to play it at, or 0
+    /// when its frames are packed and the question does not arise.
+    ///
+    /// Preprocessing is the answer wherever it is switched on. A followed video
+    /// reaches the panel through the stream path, and a stream transcodes while
+    /// it plays at one quality fixed up front — which is a guess, and a busy
+    /// video beats it: the frames it makes too big for the panel are dropped
+    /// rather than sent, and that is what "the video skips" is. Packing the file
+    /// first settles it properly. Every frame is built once, inside the panel's
+    /// data rate by construction, and playback runs no ffmpeg at all. Following
+    /// the song gets better with it too — a seek into a pack is an index, not a
+    /// decoder restarted onto the nearest keyframe.
+    ///
+    /// This is the same treatment the library gives its videos. The music path
+    /// never had it, on the reasoning that a stream cannot be packed — true of a
+    /// URL, and not true of a file that has already been downloaded.
+    ///
+    /// With preprocessing off, the fallback is a survey for a -q:v whose worst
+    /// frame still fits the panel, which at least stops the dropping.
+    ///
+    /// Either cost is paid here, while the card is already up, and is kept
+    /// against the file: the first play of a new song waits, every later one
+    /// does not. A track changed mid-build wastes the work — there is no way to
+    /// abort one, and <see cref="OnPrepared"/> drops the answer.
+    /// </summary>
+    private int Prepare(string file, double videoSeconds, int version)
+    {
+        // Built on an earlier play: the frames are on disk and playback will
+        // find them. Nothing to wait for and nothing to decide.
+        if (_display.PackReady(file)) return 0;
+
+        // Not built yet, and two things have to be true at once: this has to
+        // start now, and it has to end up preprocessed.
+        //
+        // So it starts as a stream at a surveyed quality — which at least keeps
+        // every frame inside the panel's cap — and the frames are built behind
+        // it. When that finishes, playback swaps onto them for the rest of the
+        // song, and every later play of the song starts from them.
+        //
+        // Building first and playing after was the obvious way round and it was
+        // wrong twice over. The panel sat on the card for the length of the
+        // build with nothing to show. And the position the video then started
+        // at was the one the song held when the build began, so it opened up to
+        // a minute behind and stayed there until the drift corrector hauled it
+        // back — "playing from 75.3s", then "followed a seek to 178.2s" half a
+        // minute later, in a log that had every right to be boring.
+        int quality = Calibrate(file);
+        StartPacking(file, videoSeconds, version);
+        return quality;
+    }
+
+    private int Calibrate(string file)
+    {
+        try
+        {
+            return _display.Calibrate(file);
+        }
+        catch (Exception ex)
+        {
+            // Not fatal: 0 hands the core back its own guess, which is what
+            // every stream used before any of this existed.
+            Storage.Log($"music: could not calibrate {Path.GetFileName(file)}: {ex.Message}");
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Starts building this video's frames, behind whatever is already on the
+    /// panel.
+    ///
+    /// One at a time, and the queue is one deep by being no queue at all: a
+    /// build is a minute of CPU on a machine that is also decoding, compositing
+    /// and pacing frames, and somebody skipping through six tracks must not
+    /// leave six builds running. A song passed over goes unbuilt until it is
+    /// played again, which is the right trade — it was not being watched.
+    ///
+    /// Below normal priority for the same reason. The encoding happens on this
+    /// thread, and the one thing it must not do is starve the playback it is
+    /// running behind.
+    /// </summary>
+    private void StartPacking(string file, double videoSeconds, int version)
+    {
+        if (_settings.Preprocess == PreprocessMode.Off) return;
+
+        lock (_packLock)
+        {
+            if (_packing != null) return;
+            _packing = file;
+            _packSeconds = videoSeconds;
+        }
+
+        MusicPrepare.Begin("Preparing video");
+
+        Task.Run(() =>
+        {
+            Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
+
+            bool ok = false;
+            DateTime began = DateTime.UtcNow;
+
+            try
+            {
+                ok = _display.Preprocess(file);
+            }
+            catch (Exception ex)
+            {
+                Storage.Log($"music: could not preprocess {Path.GetFileName(file)}: {ex.Message}");
+            }
+            finally
+            {
+                MusicPrepare.End();
+                lock (_packLock) _packing = null;
+            }
+
+            TimeSpan took = DateTime.UtcNow - began;
+            _dispatcher.BeginInvoke(() => OnPacked(file, videoSeconds, version, ok, took));
+        });
+    }
+
+    /// <summary>
+    /// How far the build has got, for the window's status line and — through
+    /// <see cref="MusicPrepare"/> — the card's own progress bar.
+    ///
+    /// Polled from the tick because the core counts frames and has no idea how
+    /// many there will be. This end knows: the video's length times the frame
+    /// rate, both of which it chose.
+    /// </summary>
+    /// <summary>
+    /// Decides what a video running out meant, once enough time has passed to
+    /// tell the two possibilities apart.
+    ///
+    /// A video and its song ending together is the ordinary case and needs no
+    /// comment. A song still playing well after its video stopped is proof the
+    /// match was never that recording — and, because the player will not say
+    /// how long the song is, it is the only proof available. Recording it is
+    /// what stops the same wrong video being chosen the next time the song
+    /// plays.
+    /// </summary>
+    private void JudgeEndedVideo(NativeMethods.JlMediaStatus m)
+    {
+        if (_endedTrack < 0) return;
+
+        // The song moved on, so the video ended with it. Nothing to conclude.
+        if (m.Present == 0 || m.TrackVersion != _endedTrack)
+        {
+            _endedTrack = -1;
+            return;
+        }
+
+        if (m.Playing == 0) return;                         // paused; wait for it
+        if (DateTime.UtcNow - _endedAt < VideoEndedGrace) return;
+
+        int version = _endedTrack;
+        double ranFor = _endedSeconds;
+        _endedTrack = -1;
+
+        if (ranFor <= 0) return;
+
+        Storage.Log($"music: \"{m.Title}\" is still playing at {m.Position:0}s after its " +
+                    $"{ranFor:0}s video ran out - dropping that match as too short");
+
+        // Which also means the next search for this song has a floor to work
+        // under, so it cannot come back with the same one.
+        TrackResolver.TooShort(m.Title, m.Artist, m.Duration, ranFor);
+
+        Detail = $"Video was only {ranFor:0}s — showing the card";
+    }
+
+    private void UpdatePackProgress()
+    {
+        string? file;
+        double seconds;
+        lock (_packLock)
+        {
+            file = _packing;
+            seconds = _packSeconds;
+        }
+        if (file == null) return;
+
+        int frames = _display.PreprocessFrames;
+        if (frames < 0) return;                  // between starting and its first report
+
+        double total = seconds * _settings.Fps;
+
+        // Never 100: what is left after the last frame is the file being
+        // finished and the cache swept, and a bar that sits full is worse than
+        // one that sits at 99 and then goes away.
+        int percent = total > 0 ? (int)Math.Clamp(frames / total * 100.0, 0, 99) : 0;
+        MusicPrepare.Report(percent);
+
+        Detail = _showing == Showing.Video && _streamingFile != null
+            ? $"Video {Path.GetFileNameWithoutExtension(_streamingFile)} · frames {percent}%"
+            : $"Preparing the video… {percent}%";
+    }
+
+    /// <summary>
+    /// The build finished. If the song it was for is still playing, and still
+    /// playing from the file it was built from, swap onto the frames.
+    ///
+    /// The swap costs what a drift correction costs — one restart, landing
+    /// where it was asked to — and buys the rest of the track with no ffmpeg in
+    /// the way. Nothing is lost if the conditions fail: the pack is on disk, and
+    /// the next play of this song opens with it.
+    /// </summary>
+    private void OnPacked(string file, double videoSeconds, int version,
+                          bool ok, TimeSpan took)
+    {
+        Storage.Log(ok
+            ? $"music: preprocessed {Path.GetFileName(file)} in {took.TotalSeconds:0}s"
+            : $"music: preprocessing {Path.GetFileName(file)} came to nothing after " +
+              $"{took.TotalSeconds:0}s - it will keep streaming" +
+              (_display.PreprocessMessage is { } why ? $" ({why})" : ""));
+
+        if (!ok || !_running) return;
+
+        NativeMethods.JlMediaStatus m = MediaSession.Read();
+        if (m.Present == 0 || m.Playing == 0) return;
+        if (m.TrackVersion != version || _streamingTrack != version) return;
+        if (_showing != Showing.Video || _streamingFile != file) return;
+
+        // No lead. StartLeadSeconds pays for ffmpeg connecting and decoding
+        // before it hands over a first frame; a pack has already done all of
+        // that, so adding the allowance here would only start it early.
+        double start = m.Position;
+
+        if (!_display.PlayStream(file, "", start,
+                m.Duration > 0 ? m.Duration : videoSeconds, 0))
+            return;
+
+        // The same bookkeeping a fresh start does: as far as drift and the
+        // stall check are concerned this is a new run.
+        _lastCorrection = DateTime.UtcNow;
+        _streamStartedAt = DateTime.UtcNow;
+        _lastFramesSent = -1;
+        _driftStreak = 0;
+        _lastTrackPos = -1;
+        _lastTrackPosAt = DateTime.UtcNow;
+
+        Detail = $"Video {Path.GetFileNameWithoutExtension(file)}";
+        Storage.Log($"music: swapped {Path.GetFileName(file)} onto preprocessed frames " +
+                    $"at {start:0.0}s");
+    }
+
+    private void OnPrepared(int version, string? file, double videoSeconds, int quality,
                             string title, string artist)
     {
         if (!_running) return;
@@ -667,10 +981,27 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
         // exists to avoid.
         double start = m.Position + StartLeadSeconds;
 
-        // Never past the end, whatever the numbers say.
-        if (videoSeconds > 0 && start > videoSeconds - 5) start = 0;
+        // The song is already past everything this video has. It cannot be
+        // followed, so the card keeps the panel and the match is written off as
+        // too short for this track.
+        //
+        // This used to start the video from 0 instead — "never past the end,
+        // whatever the numbers say" — which put the opening of the video
+        // against the middle of the song, every time, and was the whole of what
+        // "it is not synced" meant.
+        if (videoSeconds > 0 && start > videoSeconds - 5)
+        {
+            Detail = $"Video is {videoSeconds:0}s, the song is past that — showing the card";
+            Storage.Log($"music: \"{title}\" is at {m.Position:0}s, past the whole of its " +
+                        $"{videoSeconds:0}s video - it was never this recording");
 
-        if (!_display.PlayStream(file, "", start, m.Duration > 0 ? m.Duration : videoSeconds))
+            _exhaustedTrack = version;
+            TrackResolver.TooShort(title, artist, m.Duration, videoSeconds);
+            return;
+        }
+
+        if (!_display.PlayStream(file, "", start, m.Duration > 0 ? m.Duration : videoSeconds,
+                                 quality))
         {
             Detail = "Could not start the video";
             return;
@@ -678,6 +1009,7 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
 
         _streamingTrack = version;
         _streamingFile = file;
+        _streamingSeconds = videoSeconds;
         _showing = Showing.Video;
         _shownPath = null;
         _lastCorrection = DateTime.UtcNow;
@@ -697,6 +1029,13 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
         // had — their statistics, or nothing.
         UseCardOverlay(false);
         Detail = $"Video {Path.GetFileNameWithoutExtension(file)}";
+
+        // Logged because "it skips" is the complaint this answers, and how the
+        // frames were produced is the first thing worth knowing when it is made.
+        Storage.Log($"music: playing {Path.GetFileName(file)} from {start:0.0}s " +
+                    (quality > 0
+                        ? $"as a stream at -q:v {quality} while its frames are built"
+                        : "from preprocessed frames"));
     }
 
     /// <summary>
@@ -874,6 +1213,35 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
 
         _previousProfile = _overlays.ActiveProfileId;
         _previousEnabled = _overlay.Enabled;
+
+        // The card is never what the user had. Finding it already active means
+        // a previous run ended without putting it back — a crash, or being
+        // killed — and remembering it would make the card the thing video
+        // \"returns\" to, which composites the whole card over the video and
+        // reads as the video playing behind it.
+        //
+        // Anything else in the list is a better answer, and no overlay at all
+        // is better than that one.
+        if (_previousProfile == OverlaySettings.NowPlayingId)
+        {
+            OverlayProfile? other =
+                _overlays.Profiles.Find(p => p.Id != OverlaySettings.NowPlayingId);
+
+            _previousProfile = other?.Id;
+
+            // And the enabled flag is no more trustworthy than the profile was.
+            // The card forces compositing on; finding it on here says only that
+            // the card was up, not that the user wanted their own overlay
+            // drawn. Carrying it over is what turned their overlay on by itself
+            // the moment a video started.
+            _previousEnabled = false;
+
+            Storage.Log("music: the card was left active by a previous run; " +
+                        (other != null
+                            ? $"video will return to \"{other.Name}\", overlay off"
+                            : "video will run with no overlay"));
+        }
+
         _remembered = true;
     }
 
@@ -919,13 +1287,18 @@ public sealed class MusicFollower : INotifyPropertyChanged, IDisposable
 
             _overlays.ActiveProfileId = card.Id;
             _overlay.Refresh(card);
-            if (!_overlay.Enabled) _overlay.SetEnabled(true);
+            // Forced on for the card, and deliberately not persisted: the user
+            // did not ask for compositing, this mode needs it.
+            if (!_overlay.Enabled) _overlay.SetEnabled(true, persist: false);
             return;
         }
 
         _overlays.ActiveProfileId = _previousProfile;
         _overlay.Refresh(_overlays.Active());
-        if (_overlay.Enabled != _previousEnabled) _overlay.SetEnabled(_previousEnabled);
+        // Putting back what they had, which is equally not a choice they just
+        // made.
+        if (_overlay.Enabled != _previousEnabled)
+            _overlay.SetEnabled(_previousEnabled, persist: false);
     }
 
     private void RestoreOverlay()

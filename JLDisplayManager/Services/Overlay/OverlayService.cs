@@ -140,12 +140,29 @@ public sealed class OverlayService : IDisposable
     /// Turns compositing on or off. The native side treats off as free, so this
     /// genuinely costs nothing when the feature is unused.
     /// </summary>
-    public void SetEnabled(bool on)
+    /// <summary>
+    /// Turns compositing on or off.
+    /// </summary>
+    /// <param name="persist">
+    /// Whether this is the user's own choice, and so their saved preference.
+    /// False for a caller turning compositing on because the mode it is in
+    /// needs it — the music card is drawn almost entirely in overlay, so
+    /// showing it means forcing this on whatever the user had set.
+    ///
+    /// That override must not be written down. It used to be, and the
+    /// consequences both looked like something else entirely: an app that died
+    /// while the card was up kept \"overlay on\" as the user's preference, so
+    /// their own overlay then appeared over every video they played; and the
+    /// follower, reading that flag back at startup to know what to restore,
+    /// carried the card's forced-on state onto their profile. Neither was ever
+    /// asked for.
+    /// </param>
+    public void SetEnabled(bool on, bool persist = true)
     {
         lock (_stateLock)
         {
             _enabled = on;
-            _overlays.Enabled = on;
+            if (persist) _overlays.Enabled = on;
             _lastSignature = "";   // force a redraw when it comes back on
         }
 

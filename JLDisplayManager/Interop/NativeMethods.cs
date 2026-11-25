@@ -173,6 +173,35 @@ public static class NativeMethods
     [DllImport(Dll, CharSet = CharSet.Unicode)]
     public static extern int jl_calibrate(string path, ref JlRenderOpts opts);
 
+    /// <summary>
+    /// Builds a file's frames into the on-disk pack cache, so playing it later
+    /// runs no ffmpeg. Blocking and device-free; the options must be the ones
+    /// playback will use, because they are part of what the frames are.
+    /// </summary>
+    [DllImport(Dll, CharSet = CharSet.Unicode)]
+    public static extern int jl_preprocess(string path, ref JlRenderOpts opts);
+
+    /// <summary>
+    /// Whether playing this file with these options would find a pack waiting,
+    /// without building one.
+    /// </summary>
+    [DllImport(Dll, CharSet = CharSet.Unicode)]
+    public static extern int jl_pack_ready(string path, ref JlRenderOpts opts);
+
+    /// <summary>
+    /// Frames built so far by the <see cref="jl_preprocess"/> call in flight, or
+    /// -1 when there is none.
+    /// </summary>
+    [DllImport(Dll)]
+    public static extern int jl_preprocess_frames();
+
+    /// <summary>
+    /// The last warning or error from the most recent preprocess — the only
+    /// account of why one failed.
+    /// </summary>
+    [DllImport(Dll, CharSet = CharSet.Unicode)]
+    public static extern int jl_preprocess_message(StringBuilder buf, int cch);
+
     [DllImport(Dll)]
     public static extern void jl_stop();
 

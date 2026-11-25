@@ -63,3 +63,5 @@ Desktop.ini
 # A vcxproj nested one level deeper than the patterns above reach: gitignore
 # matches `*/x64/` at one path component, not at two.
 JLDisplayCore/JLDisplayCore/
+# Tool caches
+.serena/
