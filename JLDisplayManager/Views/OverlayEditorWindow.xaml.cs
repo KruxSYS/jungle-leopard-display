@@ -17,7 +17,8 @@ using JLDisplayManager.Services.Overlay.Ai;
 using JLDisplayManager.Services.Sensors;
 using JLDisplayManager.Views.Overlay;
 
-using MessageBox = System.Windows.MessageBox;
+using MessageBox = JLDisplayManager.Views.Dialog;
+using JLDisplayManager.Themes;
 
 namespace JLDisplayManager.Views;
 
@@ -651,12 +652,12 @@ public partial class OverlayEditorWindow : Window
             case 1:
                 Canvas.Backdrop = null;
                 Canvas.BackdropIsPanelBuffer = false;
-                Canvas.BackdropFill = new SolidColorBrush(Color.FromRgb(0x12, 0x12, 0x14));
+                Canvas.BackdropFill = Theme.Brush("EditorDark");
                 break;
             case 2:
                 Canvas.Backdrop = null;
                 Canvas.BackdropIsPanelBuffer = false;
-                Canvas.BackdropFill = new SolidColorBrush(Color.FromRgb(0x46, 0x4E, 0x56));
+                Canvas.BackdropFill = Theme.Brush("EditorGrey");
                 break;
             default:
                 Canvas.Backdrop = null;
@@ -676,9 +677,9 @@ public partial class OverlayEditorWindow : Window
         var group = new DrawingGroup();
         using (DrawingContext dc = group.Open())
         {
-            dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3E)), null,
+            dc.DrawRectangle(Theme.Brush("EditorCheckerLight"), null,
                 new Rect(0, 0, 16, 16));
-            var dark = new SolidColorBrush(Color.FromRgb(0x2E, 0x2E, 0x32));
+            var dark = Theme.Brush("EditorCheckerDark");
             dc.DrawRectangle(dark, null, new Rect(0, 0, 8, 8));
             dc.DrawRectangle(dark, null, new Rect(8, 8, 8, 8));
         }

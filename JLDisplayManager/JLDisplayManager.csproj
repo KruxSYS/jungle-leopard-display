@@ -28,7 +28,15 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <AssemblyTitle>Jungle Leopard Display Manager</AssemblyTitle>
     <Product>Jungle Leopard Display</Product>
-    <Version>1.6.0</Version>
+    <!-- The release version. tools/release.ps1 reads it from here and checks
+         JLDisplayCore/jl_version.h (the native binaries) agrees. -->
+    <Version>1.7.0</Version>
+    <Company>KruxSYS</Company>
+    <Authors>KruxSYS</Authors>
+    <Copyright>© 2026 KruxSYS</Copyright>
+    <!-- Keep the informational version to "1.7.0" (no +commit suffix) so the
+         About card and Explorer's Details tab show the same thing. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 
     <!-- Land beside the native output so DllImport resolves with no probing
          paths, no copy step, and no chance of loading a stale DLL. -->
@@ -60,7 +68,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="app.ico"/>
+    <!-- Also a WPF resource: the tray loads its 16 px frame from it
+         (App.LoadIcon), and the About card shows the mark. -->
+    <Resource Include="app.ico"/>
+    <Resource Include="..\assets\brand\jungle-leopard-256.png" Link="Themes\jungle-leopard-256.png"/>
     <!-- Bundled yt-dlp: ships beside the manager so a download works with no
          pip install or PATH entry. Preserved in the source tree and copied to
          output on build. -->

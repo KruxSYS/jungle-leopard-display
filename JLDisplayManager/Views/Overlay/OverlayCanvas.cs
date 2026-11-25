@@ -9,6 +9,7 @@ using System.Windows.Media.Imaging;
 using JLDisplayManager.Models.Overlay;
 using JLDisplayManager.Services.Overlay;
 using JLDisplayManager.Services.Sensors;
+using JLDisplayManager.Themes;
 
 namespace JLDisplayManager.Views.Overlay;
 
@@ -73,7 +74,7 @@ public sealed class OverlayCanvas : FrameworkElement
     /// <summary>The mounting rotation, from Settings. Drives the backdrop's turn.</summary>
     public int Rotate { get; set; }
 
-    public Brush BackdropFill { get; set; } = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2E));
+    public Brush BackdropFill { get; set; } = Theme.Brush("EditorBackdrop");
 
     public double Zoom { get; set; } = 1.0;
 
@@ -206,7 +207,7 @@ public sealed class OverlayCanvas : FrameworkElement
 
     private void DrawGrid(DrawingContext dc, double w, double h)
     {
-        var pen = new Pen(new SolidColorBrush(Color.FromArgb(28, 255, 255, 255)), 1 / Zoom);
+        var pen = new Pen(Theme.Brush("EditorGrid"), 1 / Zoom);
         pen.Freeze();
 
         for (double x = GridSize; x < w; x += GridSize)
@@ -219,7 +220,7 @@ public sealed class OverlayCanvas : FrameworkElement
     {
         if (_guidesX.Count == 0 && _guidesY.Count == 0) return;
 
-        var pen = new Pen(new SolidColorBrush(Color.FromArgb(220, 0xF0, 0xA0, 0x30)), 1);
+        var pen = new Pen(Theme.Brush("Accent"), 1);
         pen.Freeze();
 
         foreach (double x in _guidesX)
@@ -236,14 +237,14 @@ public sealed class OverlayCanvas : FrameworkElement
 
         Rect r = ScreenRect(Selected);
 
-        var outline = new Pen(new SolidColorBrush(Color.FromArgb(255, 0xF0, 0xA0, 0x30)), 1.5);
+        var outline = new Pen(Theme.Brush("Accent"), 1.5);
         outline.Freeze();
         dc.DrawRectangle(null, outline, r);
 
         if (Selected.Locked) return;   // no handles on something that will not move
 
-        Brush fill = Brushes.White;
-        var edge = new Pen(new SolidColorBrush(Color.FromRgb(0xF0, 0xA0, 0x30)), 1);
+        Brush fill = Theme.Brush("HandleFill");
+        var edge = new Pen(Theme.Brush("Accent"), 1);
         edge.Freeze();
 
         foreach (Point p in HandlePoints(r))

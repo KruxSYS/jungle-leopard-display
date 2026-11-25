@@ -10,7 +10,7 @@ using JLDisplayManager.Models;
 using JLDisplayManager.Services;
 using JLDisplayManager.Services.Music;
 
-using MessageBox = System.Windows.MessageBox;
+using MessageBox = JLDisplayManager.Views.Dialog;
 
 namespace JLDisplayManager.Views;
 
@@ -25,20 +25,6 @@ public partial class SettingsWindow : Window
     private static readonly int[] MusicCacheValues = { 512, 1024, 2048, 4096, 8192, 16384 };
     private static readonly int[] MusicMaxLengthValues = { 5, 8, 12, 20, 30, 0 };
 
-    /// <summary>
-    /// The dark ink the other combo boxes set inline in XAML. Items built in
-    /// code have to say it too, or they inherit the window's light foreground
-    /// and vanish against the dropdown's background.
-    /// </summary>
-    private static readonly Brush ComboText = FrozenInk();
-
-    private static Brush FrozenInk()
-    {
-        var brush = new SolidColorBrush(Color.FromRgb(0x1A, 0x12, 0x07));
-        brush.Freeze();   // shared across every item, so it must not stay mutable
-        return brush;
-    }
-
     private readonly App _app = App.Current;
     private bool _loaded;
 
@@ -46,8 +32,27 @@ public partial class SettingsWindow : Window
     {
         InitializeComponent();
         Load();
+        ShowAbout();
         _loaded = true;
     }
+
+    private void ShowAbout()
+    {
+        VersionText.Text = $"Version {AppInfo.Version}";
+        RepoLinkText.Text = AppInfo.RepoUrl.Replace("https://", "");
+        RepoLink.NavigateUri = new Uri(AppInfo.RepoUrl);
+        SiteLinkText.Text = AppInfo.WebsiteUrl.Replace("https://", "");
+        SiteLink.NavigateUri = new Uri(AppInfo.WebsiteUrl);
+    }
+
+    private void OnOpenLink(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Documents.Hyperlink { NavigateUri: { } uri }
+            && uri.Scheme == Uri.UriSchemeHttps)
+            Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
+    }
+
+    private void OnAbout(object sender, RoutedEventArgs e) => AboutCard.BringIntoView();
 
     private void Load()
     {
@@ -229,7 +234,6 @@ public partial class SettingsWindow : Window
                 Content = new TextBlock
                 {
                     Text = $"{FormatSize(mb)} — {PlayingTime(mb)} of video",
-                    Foreground = ComboText,
                 },
             });
         }
@@ -549,16 +553,11 @@ public partial class SettingsWindow : Window
 
         MediaAppCombo.SelectedItem ??= MediaAppCombo.Items[0];
 
-        // The same trick the rest of the combos use: an item's generated
-        // TextBlock picks up the app's implicit style and renders invisible, so
-        // the content is an explicit TextBlock with its own foreground.
+        // The combo chrome is dark (Themes/KruxSYS.xaml), so the implicit
+        // TextBlock colour is the right one and the item needs none of its own.
         static ComboBoxItem Entry(string text, string tag) => new()
         {
-            Content = new TextBlock
-            {
-                Text = text,
-                Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x12, 0x07)),
-            },
+            Content = new TextBlock { Text = text },
             Tag = tag,
         };
     }
@@ -588,7 +587,7 @@ public partial class SettingsWindow : Window
 
         if (haveTemp)
         {
-            SensorStatusText.Foreground = (Brush)FindResource("TextDim");
+            SensorStatusText.Foreground = (Brush)FindResource("TextMuted");
             SensorStatusText.Text = $"Reading from {string.Join(" and ", live)}. "
                                     + "CPU temperature is available.";
             return;

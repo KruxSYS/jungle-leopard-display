@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 
 using JLDisplayManager.Services.Sensors;
+using JLDisplayManager.Themes;
 
 namespace JLDisplayManager.Views.Overlay;
 
@@ -40,7 +41,7 @@ public sealed class TokenPickerWindow : Window
         Height = 560;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
-        Background = (Brush?)TryFindResource("Bg") ?? Brushes.Black;
+        Background = Theme.Brush("Bg");
 
         var root = new Grid { Margin = new Thickness(14) };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -68,7 +69,7 @@ public sealed class TokenPickerWindow : Window
             Text = "Format",
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 8, 0),
-            Foreground = (Brush?)TryFindResource("TextDim") ?? Brushes.Gray,
+            Foreground = Theme.Brush("TextMuted"),
         };
         _format.Text = "0";
         _format.ToolTip = "A .NET number format: 0, 0.0, 0.00. Leave empty to let it choose.";
@@ -175,7 +176,7 @@ public sealed class PromptWindow : Window
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
-        Background = (Brush?)TryFindResource("Bg") ?? Brushes.Black;
+        Background = Theme.Brush("Bg");
 
         var panel = new StackPanel { Margin = new Thickness(16) };
 
@@ -183,7 +184,7 @@ public sealed class PromptWindow : Window
         {
             Text = label,
             Margin = new Thickness(0, 0, 0, 6),
-            Foreground = (Brush?)TryFindResource("TextDim") ?? Brushes.Gray,
+            Foreground = Theme.Brush("TextMuted"),
         });
 
         _box.Text = initial;

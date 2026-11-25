@@ -23,19 +23,19 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Rotation" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox x:Name="RotateBox" Grid.Column="1">
-                        <ComboBoxItem><TextBlock Text="0° — as mounted" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="90° clockwise" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="180° — upside down" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="270° clockwise" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="0° — as mounted"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="90° clockwise"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="180° — upside down"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="270° clockwise"/></ComboBoxItem>
                     </ComboBox>
                 </Grid>
 
                 <CheckBox x:Name="StretchBox"
                           Content="Stretch to fill (ignore the source's aspect ratio)"/>
                 <TextBlock Margin="24,0,0,10" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="Off pads with black to keep the picture's shape."/>
 
                 <Grid Margin="0,4,0,10">
@@ -45,7 +45,7 @@
                         <ColumnDefinition Width="46"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Frame rate" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <!-- IsMoveToPointEnabled, because a Slider's default answer
                          to a click on the track is to step by LargeChange (one
                          tick) rather than to go where it was clicked. Over a
@@ -60,7 +60,7 @@
                                VerticalAlignment="Center"/>
                 </Grid>
                 <TextBlock Margin="0,-6,0,14" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="The panel refreshes at 30 fps; asking for more mostly wastes CPU."/>
 
                 <TextBlock Text="DECODING" Style="{StaticResource Heading}"/>
@@ -71,18 +71,18 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Acceleration" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox x:Name="HwaccelBox" Grid.Column="1">
-                        <ComboBoxItem><TextBlock Text="auto" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="none (software)" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="cuda" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="qsv" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="d3d11va" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="dxva2" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="auto"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="none (software)"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="cuda"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="qsv"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="d3d11va"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="dxva2"/></ComboBoxItem>
                     </ComboBox>
                 </Grid>
                 <TextBlock Margin="0,0,0,14" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="Affects decoding only — the JPEG encode always runs on the CPU. Helps most on high-resolution sources."/>
 
                 <TextBlock Text="PREPROCESSING" Style="{StaticResource Heading}"/>
@@ -93,12 +93,12 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Mode" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox x:Name="PreprocessBox" Grid.Column="1"
                               SelectionChanged="OnPreprocessChanged">
-                        <ComboBoxItem><TextBlock Text="Off — transcode while playing" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="Memory — transcode once into RAM" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="Disk — transcode once, keep on disk" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="Off — transcode while playing"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="Memory — transcode once into RAM"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="Disk — transcode once, keep on disk"/></ComboBoxItem>
                     </ComboBox>
                 </Grid>
 
@@ -108,7 +108,7 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock x:Name="BudgetLabel" Grid.Column="0" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox x:Name="BudgetBox" Grid.Column="1"
                               SelectionChanged="OnBudgetChanged"/>
                 </Grid>
@@ -124,25 +124,25 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Data rate" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox x:Name="ByteRateBox" Grid.Column="1"
                               SelectionChanged="OnByteRateChanged"
                               ToolTip="How much the panel is asked to decode per second. The link carries far more than this; what runs out is the panel's own decoding, and it gives no sign when it falls behind. Raise it only while watching the panel.">
-                        <ComboBoxItem><TextBlock Text="0.7 MB/s — for dense footage that still stutters" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="0.9 MB/s — softer, but steady" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="1.1 MB/s — what the panel has always been sent" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="1.4 MB/s — sharper; watch for stutter" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="1.9 MB/s — only if it keeps up" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="0.7 MB/s — for dense footage that still stutters"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="0.9 MB/s — softer, but steady"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1.1 MB/s — what the panel has always been sent"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1.4 MB/s — sharper; watch for stutter"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1.9 MB/s — only if it keeps up"/></ComboBoxItem>
                     </ComboBox>
                 </Grid>
 
                 <TextBlock x:Name="PreprocessHint" Margin="0,0,0,8" FontSize="11"
-                           TextWrapping="Wrap" Foreground="{StaticResource TextDim}"/>
+                           TextWrapping="Wrap" Foreground="{StaticResource TextMuted}"/>
 
                 <StackPanel x:Name="PackCachePanel" Orientation="Horizontal"
                             Margin="0,0,0,14" Visibility="Collapsed">
                     <TextBlock x:Name="PackCacheText" VerticalAlignment="Center"
-                               FontSize="11" Foreground="{StaticResource TextDim}"/>
+                               FontSize="11" Foreground="{StaticResource TextMuted}"/>
                     <Button Content="Clear" Style="{StaticResource Btn}"
                             Margin="10,0,0,0" Click="OnClearPackCache"
                             ToolTip="Delete every preprocessed file. They rebuild the next time an item plays."/>
@@ -153,7 +153,7 @@
                 <CheckBox x:Name="StartWithWindowsBox" Content="Start when I sign in"
                           Click="OnStartWithWindowsChanged"/>
                 <TextBlock Margin="24,0,0,8" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="Registers a scheduled task, which also restarts the app if it stops unexpectedly."/>
 
                 <CheckBox x:Name="StartMinimisedBox" Content="Start hidden in the notification area"/>
@@ -161,30 +161,30 @@
 
                 <CheckBox x:Name="StartAiBox" Content="Start the AI slideshow"/>
                 <TextBlock x:Name="StartAiHint" Margin="24,0,0,8" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"/>
+                           Foreground="{StaticResource TextMuted}"/>
 
                 <CheckBox x:Name="AutoReconnectBox" Content="Reconnect automatically when the display returns"/>
                 <CheckBox x:Name="BlankOnExitBox" Content="Blank the panel on exit"/>
                 <TextBlock Margin="24,0,0,14" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="Off leaves the last frame frozen on the glass after the app closes."/>
 
                 <TextBlock Text="SENSORS" Style="{StaticResource Heading}"/>
 
                 <TextBlock Margin="0,0,0,8" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="Windows cannot measure CPU temperature by itself — on AMD it sits behind the SMU and needs a kernel driver. Run either of these and the overlay can read what it already measures, along with fan speeds, coolant temperature and motherboard sensors."/>
 
                 <CheckBox x:Name="LhmBox" Content="LibreHardwareMonitor"
                           Checked="OnSensorSourceChanged" Unchecked="OnSensorSourceChanged"/>
                 <TextBlock Margin="24,0,0,8" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="Needs its web server switched on: Options → Remote Web Server → Run."/>
 
                 <CheckBox x:Name="HwInfoBox" Content="HWiNFO"
                           Checked="OnSensorSourceChanged" Unchecked="OnSensorSourceChanged"/>
                 <TextBlock Margin="24,0,0,8" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="Needs Shared Memory Support enabled in its settings."/>
 
                 <TextBlock x:Name="SensorStatusText" TextWrapping="Wrap" FontSize="11"
@@ -193,19 +193,19 @@
                 <TextBlock Text="MUSIC" Style="{StaticResource Heading}"/>
 
                 <TextBlock Margin="0,0,0,8" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="Follows whatever is playing elsewhere on this machine — a browser tab, a music player — and puts it on the panel. Nothing here plays audio or controls playback; the player you already use stays the remote control."/>
 
                 <CheckBox x:Name="MediaSessionBox" Content="Read what's playing"
                           Checked="OnMusicChanged" Unchecked="OnMusicChanged"/>
                 <TextBlock Margin="24,0,0,8" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="Publishes the track as music.* sensors, so any overlay can show the title, artist, album art or progress. Takes effect on the next restart."/>
 
                 <CheckBox x:Name="MusicVideoBox" Content="Stream the music video"
                           Checked="OnMusicChanged" Unchecked="OnMusicChanged"/>
                 <TextBlock Margin="24,0,0,8" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="Searches YouTube for the track and streams the video live, matching on length so a lyric video or an hour-long loop is not mistaken for the song. Tracks with no video show the card instead. Off means the card, always, and no searching."/>
 
                 <Grid Margin="0,4,0,8">
@@ -214,12 +214,12 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Follow" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox Grid.Column="1" x:Name="MediaAppCombo"
                               SelectionChanged="OnMediaAppChanged"/>
                 </Grid>
                 <TextBlock Margin="24,0,0,14" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{StaticResource TextDim}"
+                           Foreground="{StaticResource TextMuted}"
                            Text="Which player to follow when more than one is running. Automatic prefers whichever is actually playing."/>
 
                 <Grid Margin="0,0,0,6">
@@ -228,16 +228,16 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Longest video" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox Grid.Column="1" x:Name="MusicMaxLengthCombo"
                               SelectionChanged="OnMusicCacheSettingChanged"
                               ToolTip="Anything longer is not downloaded. A search for a song reliably turns up an hour of it on loop, and length is checked before the fetch rather than after it.">
-                        <ComboBoxItem><TextBlock Text="5 minutes" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="8 minutes" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="12 minutes" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="20 minutes" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="30 minutes" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="No limit" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="5 minutes"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="8 minutes"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="12 minutes"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="20 minutes"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="30 minutes"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="No limit"/></ComboBoxItem>
                     </ComboBox>
                 </Grid>
 
@@ -247,16 +247,16 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Keep videos" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox Grid.Column="1" x:Name="MusicDaysCombo"
                               SelectionChanged="OnMusicCacheSettingChanged"
                               ToolTip="How long a downloaded video is kept after it was last played. Listening moves on, so this is what stops the cache filling with music you no longer play.">
-                        <ComboBoxItem><TextBlock Text="3 days" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="1 week" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="2 weeks" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="1 month" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="3 months" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="Until the limit below is reached" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="3 days"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1 week"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="2 weeks"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1 month"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="3 months"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="Until the limit below is reached"/></ComboBoxItem>
                     </ComboBox>
                 </Grid>
 
@@ -266,22 +266,22 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Cache limit" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox Grid.Column="1" x:Name="MusicCacheCombo"
                               SelectionChanged="OnMusicCacheSettingChanged"
                               ToolTip="Reaching this drops the least recently played videos rather than refusing to fetch new ones. A 720p music video is usually 10-30 MB.">
-                        <ComboBoxItem><TextBlock Text="512 MB" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="1 GB" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="2 GB" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="4 GB" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="8 GB" Foreground="#1A1207"/></ComboBoxItem>
-                        <ComboBoxItem><TextBlock Text="16 GB" Foreground="#1A1207"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="512 MB"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="1 GB"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="2 GB"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="4 GB"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="8 GB"/></ComboBoxItem>
+                        <ComboBoxItem><TextBlock Text="16 GB"/></ComboBoxItem>
                     </ComboBox>
                 </Grid>
 
                 <StackPanel Orientation="Horizontal" Margin="0,2,0,14">
                     <TextBlock x:Name="MusicCacheText" VerticalAlignment="Center"
-                               FontSize="11" Foreground="{StaticResource TextDim}"/>
+                               FontSize="11" Foreground="{StaticResource TextMuted}"/>
                     <Button Content="Clear" Style="{StaticResource Btn}"
                             Margin="10,0,0,0" Click="OnClearMusicCache"
                             ToolTip="Delete every downloaded music video. They are fetched again the next time each track plays."/>
@@ -298,13 +298,13 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Serial port" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <TextBox x:Name="PortBox" Grid.Column="1"
                              ToolTip="Leave empty to find the display by its hardware ID."/>
                 </Grid>
 
                 <TextBlock x:Name="DeviceInfoText" TextWrapping="Wrap" FontSize="11"
-                           Foreground="{StaticResource TextDim}" Margin="0,0,0,10"/>
+                           Foreground="{StaticResource TextMuted}" Margin="0,0,0,10"/>
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
                     <Button Content="Release device" Style="{StaticResource Btn}"
@@ -315,13 +315,66 @@
                 </StackPanel>
 
                 <TextBlock x:Name="FfmpegText" TextWrapping="Wrap" FontSize="11"
-                           Foreground="{StaticResource TextDim}"/>
+                           Foreground="{StaticResource TextMuted}" Margin="0,0,0,14"/>
+
+                <!-- ============ about ============ -->
+                <TextBlock Text="ABOUT" Style="{StaticResource Heading}"/>
+
+                <!-- A KruxSYS card: square panel, 1 px line, and the cyan
+                     12 px corner brackets top-left and bottom-right. -->
+                <Grid x:Name="AboutCard" Margin="0,0,0,6">
+                    <Border Style="{StaticResource Card}" Padding="16,14">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <Image Source="/Themes/jungle-leopard-256.png" Width="56" Height="56"
+                                       RenderOptions.BitmapScalingMode="HighQuality"
+                                       VerticalAlignment="Top"/>
+                                <StackPanel Margin="14,2,0,0" VerticalAlignment="Center">
+                                    <TextBlock Text="Jungle Leopard Display" FontSize="16"
+                                               FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="VersionText" Margin="0,3,0,0" FontSize="11"
+                                               FontFamily="{StaticResource Mono}"
+                                               Foreground="{StaticResource TextMuted}"/>
+                                    <!-- The wordmark: bold Krux in the text colour,
+                                         monospace SYS in cyan. -->
+                                    <TextBlock Margin="0,6,0,0" FontSize="12">
+                                        <Run Text="by " Foreground="{StaticResource TextMuted}"/><Run
+                                         Text="Krux" FontWeight="Bold"/><Run
+                                         Text="SYS" FontFamily="{StaticResource Mono}"
+                                         Foreground="{StaticResource Accent}"/>
+                                    </TextBlock>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <TextBlock Margin="0,14,0,0" FontSize="11" TextWrapping="Wrap"
+                                       Foreground="{StaticResource TextSoft}"
+                                       Text="Drives the TZMRIT PF360 &#x201C;Jungle Leopard&#x201D; pump LCD without the vendor's app. The protocol was reverse-engineered from the vendor's Electron application and verified against firmware 3.1; no vendor code is shipped."/>
+
+                            <TextBlock Margin="0,10,0,0" FontSize="11">
+                                <Hyperlink x:Name="RepoLink" Click="OnOpenLink"><Run x:Name="RepoLinkText"/></Hyperlink>
+                            </TextBlock>
+                            <TextBlock Margin="0,4,0,0" FontSize="11">
+                                <Hyperlink x:Name="SiteLink" Click="OnOpenLink"><Run x:Name="SiteLinkText"/></Hyperlink>
+                            </TextBlock>
+                            <TextBlock Margin="0,10,0,0" FontSize="11"
+                                       Foreground="{StaticResource TextMuted}"
+                                       Text="&#x00A9; 2026 KruxSYS"/>
+                        </StackPanel>
+                    </Border>
+                    <Path Data="M1,13 V1 H13" Stroke="{StaticResource Accent}" StrokeThickness="2"
+                          HorizontalAlignment="Left" VerticalAlignment="Top"
+                          SnapsToDevicePixels="True" IsHitTestVisible="False"/>
+                    <Path Data="M12,0 V12 H0" Margin="0,0,1,1" Stroke="{StaticResource Accent}" StrokeThickness="2"
+                          HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                          SnapsToDevicePixels="True" IsHitTestVisible="False"/>
+                </Grid>
 
             </StackPanel>
         </ScrollViewer>
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"
                     Margin="0,14,0,0">
+            <Button Content="About" Style="{StaticResource Btn}" Margin="0,0,8,0" Click="OnAbout"/>
             <Button Content="Close" Style="{StaticResource BtnPrimary}" Click="OnClose"/>
         </StackPanel>
     </Grid>

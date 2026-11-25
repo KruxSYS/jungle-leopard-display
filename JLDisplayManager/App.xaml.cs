@@ -13,10 +13,11 @@ using JLDisplayManager.Services;
 using JLDisplayManager.Services.Ai;
 using JLDisplayManager.Services.Music;
 using JLDisplayManager.Services.Overlay;
+using JLDisplayManager.Themes;
 using JLDisplayManager.Views;
 
 using Application = System.Windows.Application;
-using MessageBox = System.Windows.MessageBox;
+using MessageBox = JLDisplayManager.Views.Dialog;
 
 namespace JLDisplayManager;
 
@@ -61,6 +62,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        Theme.HookWindows();
 
         // A tray app spends most of its life with no window on screen, so an
         // unhandled exception would otherwise vanish with nothing to show for
@@ -271,7 +273,7 @@ public partial class App : Application
 
     private void BuildTray()
     {
-        var menu = new ContextMenuStrip();
+        var menu = new ContextMenuStrip { Renderer = Theme.TrayRenderer() };
 
         // Labels rather than disabled items: the point is to be read, and a
         // greyed-out menu entry reads as broken rather than as information.
@@ -365,8 +367,8 @@ public partial class App : Application
             _trayAiStatus.Text = ai;
             _trayAiStatus.Visible = ai.Length > 0;
             _trayAiStatus.ForeColor = Pipeline.HasError
-                ? Color.FromArgb(0xE2, 0x60, 0x3C)
-                : System.Drawing.SystemColors.ControlText;
+                ? Theme.Gdi("Error")
+                : Theme.Gdi("Text");
         }
 
         if (_trayPlaylistItem is not null)
@@ -385,6 +387,14 @@ public partial class App : Application
     {
         try
         {
+            // The tray wants the 16 px frame, which is drawn for that size.
+            // ExtractAssociatedIcon only ever returns the 32 px one, and Windows
+            // shrinking that is a blur of the ring rather than the small mark.
+            var res = Application.GetResourceStream(new Uri("pack://application:,,,/app.ico"));
+            if (res != null)
+                using (res.Stream)
+                    return new Icon(res.Stream, SystemInformation.SmallIconSize);
+
             string exe = Environment.ProcessPath ?? "";
             if (File.Exists(exe) && Icon.ExtractAssociatedIcon(exe) is { } icon) return icon;
         }

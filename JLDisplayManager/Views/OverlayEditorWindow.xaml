@@ -15,8 +15,8 @@
         </Grid.RowDefinitions>
 
         <!-- Profile bar -->
-        <Border Grid.Row="0" Padding="10,8" CornerRadius="6" Margin="0,0,0,12"
-                Background="{StaticResource BgRaised}" BorderThickness="1"
+        <Border Grid.Row="0" Padding="10,8" CornerRadius="{StaticResource RadiusPanel}" Margin="0,0,0,12"
+                Background="{StaticResource Panel}" BorderThickness="1"
                 BorderBrush="{StaticResource Line}">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -33,7 +33,7 @@
                           Checked="OnEnabledChanged" Unchecked="OnEnabledChanged"/>
 
                 <TextBlock Grid.Column="1" Text="Profile" VerticalAlignment="Center"
-                           Margin="0,0,8,0" Foreground="{StaticResource TextDim}"/>
+                           Margin="0,0,8,0" Foreground="{StaticResource TextMuted}"/>
 
                 <ComboBox x:Name="ProfileBox" Grid.Column="2" VerticalAlignment="Center"
                           ItemTemplate="{StaticResource ComboText}"
@@ -51,18 +51,18 @@
 
                 <StackPanel Grid.Column="5" Orientation="Horizontal">
                     <TextBlock Text="Theme" VerticalAlignment="Center" Margin="0,0,6,0"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox x:Name="ThemeBox" Width="104" VerticalAlignment="Center"
                               ItemTemplate="{StaticResource ComboText}"
                               SelectionChanged="OnThemeChanged"/>
 
                     <TextBlock Text="Backdrop" VerticalAlignment="Center" Margin="14,0,6,0"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox x:Name="BackdropBox" Width="130" VerticalAlignment="Center"
                               ItemTemplate="{StaticResource ComboText}"
                               SelectionChanged="OnBackdropChanged"/>
                     <TextBlock Text="Zoom" VerticalAlignment="Center" Margin="14,0,6,0"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
                     <ComboBox x:Name="ZoomBox" Width="76" VerticalAlignment="Center"
                               ItemTemplate="{StaticResource ComboText}"
                               SelectionChanged="OnZoomChanged"/>
@@ -84,8 +84,8 @@
             </Grid.ColumnDefinitions>
 
             <!-- Layers -->
-            <Border Grid.Column="0" Padding="10" CornerRadius="6" Margin="0,0,12,0"
-                    Background="{StaticResource BgRaised}" BorderThickness="1"
+            <Border Grid.Column="0" Padding="10" CornerRadius="{StaticResource RadiusPanel}" Margin="0,0,12,0"
+                    Background="{StaticResource Panel}" BorderThickness="1"
                     BorderBrush="{StaticResource Line}">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -146,8 +146,8 @@
             </Border>
 
             <!-- Canvas -->
-            <Border Grid.Column="1" CornerRadius="6" Padding="10"
-                    Background="{StaticResource BgSunken}" BorderThickness="1"
+            <Border Grid.Column="1" CornerRadius="{StaticResource RadiusPanel}" Padding="10"
+                    Background="{StaticResource Bg}" BorderThickness="1"
                     BorderBrush="{StaticResource Line}">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -177,9 +177,9 @@
                     <!-- The pending result. Nothing is saved or sent to the
                          panel permanently until Accept. -->
                     <Border x:Name="AiBanner" Grid.Row="1" Margin="0,0,0,10" Padding="10,8"
-                            CornerRadius="5" Visibility="Collapsed"
-                            Background="#1F1B16" BorderThickness="1"
-                            BorderBrush="{StaticResource AccentDim}">
+                            CornerRadius="{StaticResource RadiusPanel}" Visibility="Collapsed"
+                            Background="{StaticResource Panel2}" BorderThickness="1"
+                            BorderBrush="{StaticResource Line2}">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -190,7 +190,7 @@
                                 <TextBlock x:Name="AiHeadline" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="AiDetail" TextWrapping="Wrap" FontSize="11"
                                            Margin="0,3,0,0" Visibility="Collapsed"
-                                           Foreground="{StaticResource TextDim}"/>
+                                           Foreground="{StaticResource TextMuted}"/>
                             </StackPanel>
 
                             <StackPanel x:Name="AiActions" Grid.Column="1"
@@ -214,14 +214,14 @@
                     </ScrollViewer>
 
                     <TextBlock x:Name="CanvasHint" Grid.Row="3" Margin="0,10,0,0" FontSize="11"
-                               TextWrapping="Wrap" Foreground="{StaticResource TextDim}"
+                               TextWrapping="Wrap" Foreground="{StaticResource TextMuted}"
                                Text="Drag to move, handles to resize. Arrows nudge by 1, Shift+arrow by 10, Alt ignores snapping. Del removes · Ctrl+D duplicates · Ctrl+↑/↓ reorders · Ctrl+H hides · Ctrl+L locks · Ctrl+Z undoes · Tab cycles · Esc deselects."/>
                 </Grid>
             </Border>
 
             <!-- Properties -->
-            <Border Grid.Column="2" CornerRadius="6" Margin="12,0,0,0"
-                    Background="{StaticResource BgRaised}" BorderThickness="1"
+            <Border Grid.Column="2" CornerRadius="{StaticResource RadiusPanel}" Margin="12,0,0,0"
+                    Background="{StaticResource Panel}" BorderThickness="1"
                     BorderBrush="{StaticResource Line}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12">
                     <ov:PropertyPanel x:Name="Properties"/>
@@ -232,7 +232,7 @@
         <!-- Footer -->
         <Grid Grid.Row="2" Margin="0,12,0,0">
             <TextBlock x:Name="StatusText" VerticalAlignment="Center"
-                       Foreground="{StaticResource TextDim}" FontSize="11"/>
+                       Foreground="{StaticResource TextMuted}" FontSize="11"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Close" Style="{StaticResource Btn}" Click="OnClose"/>
             </StackPanel>

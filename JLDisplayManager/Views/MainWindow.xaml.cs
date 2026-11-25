@@ -16,7 +16,7 @@ using JLDisplayManager.Interop;
 using JLDisplayManager.Models;
 using JLDisplayManager.Services;
 
-using MessageBox = System.Windows.MessageBox;
+using MessageBox = JLDisplayManager.Views.Dialog;
 
 namespace JLDisplayManager.Views;
 
@@ -134,12 +134,12 @@ public partial class MainWindow : Window
         AiStatusText.Text = pipeline.Summary;
 
         AiStatusText.Foreground = pipeline.HasError
-            ? (Brush)FindResource("Danger")
+            ? (Brush)FindResource("Error")
             : (Brush)FindResource("Text");
 
-        AiDot.Fill = pipeline.HasError ? (Brush)FindResource("Danger")
+        AiDot.Fill = pipeline.HasError ? (Brush)FindResource("Error")
             : pipeline.Running ? (Brush)FindResource("Accent")
-            : (Brush)FindResource("AccentDim");
+            : (Brush)FindResource("TextMuted");
 
         // The error, while there is one, is more use than the prompt.
         string? detail = pipeline.HasError ? pipeline.LastError : pipeline.CurrentPrompt;
@@ -233,10 +233,10 @@ public partial class MainWindow : Window
 
         StatusDot.Fill = d.State switch
         {
-            NativeMethods.JlState.Error => (Brush)FindResource("Danger"),
-            NativeMethods.JlState.Disconnected => (Brush)FindResource("Danger"),
+            NativeMethods.JlState.Error => (Brush)FindResource("Error"),
+            NativeMethods.JlState.Disconnected => (Brush)FindResource("Error"),
             NativeMethods.JlState.Playing => (Brush)FindResource("Accent"),
-            _ => (Brush)FindResource("AccentDim"),
+            _ => (Brush)FindResource("TextMuted"),
         };
 
         StatusDetail.Text = d.HasError ? d.Error : d.Message;

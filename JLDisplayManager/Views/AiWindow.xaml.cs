@@ -14,7 +14,7 @@ using System.Windows.Threading;
 using JLDisplayManager.Models;
 using JLDisplayManager.Services.Ai;
 
-using MessageBox = System.Windows.MessageBox;
+using MessageBox = JLDisplayManager.Views.Dialog;
 
 namespace JLDisplayManager.Views;
 

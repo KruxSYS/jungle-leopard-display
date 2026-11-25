@@ -12,17 +12,17 @@
 
         <!-- Library tile -->
         <DataTemplate x:Key="LibraryTile">
-            <Border Width="168" Margin="0,0,10,10" CornerRadius="6"
-                    Background="{StaticResource BgRaised}"
+            <Border Width="168" Margin="0,0,10,10" CornerRadius="{StaticResource RadiusPanel}"
+                    Background="{StaticResource Panel2}"
                     BorderBrush="{StaticResource Line}" BorderThickness="1">
                 <StackPanel>
-                    <Border Height="84" CornerRadius="5,5,0,0" Background="{StaticResource BgSunken}"
+                    <Border Height="84" CornerRadius="{StaticResource RadiusPanel}" Background="{StaticResource Bg}"
                             ClipToBounds="True">
                         <Grid>
                             <Image Source="{Binding Thumbnail}" Stretch="Uniform"/>
                             <!-- Marks a video without needing a second column of
                                  text; the tile is too small for a label. -->
-                            <Border Background="#B0000000" CornerRadius="3"
+                            <Border Background="{StaticResource Scrim}" CornerRadius="{StaticResource RadiusControl}"
                                     Padding="5,1" Margin="6"
                                     HorizontalAlignment="Left" VerticalAlignment="Top"
                                     Visibility="{Binding IsVideo,
@@ -33,7 +33,7 @@
 
                             <!-- Marks what the pipeline made, so a generated
                                  image is never mistaken for one you added. -->
-                            <Border Background="#B0000000" CornerRadius="3"
+                            <Border Background="{StaticResource Scrim}" CornerRadius="{StaticResource RadiusControl}"
                                     Padding="5,1" Margin="6"
                                     HorizontalAlignment="Left" VerticalAlignment="Top"
                                     Visibility="{Binding IsGenerated,
@@ -43,7 +43,7 @@
                             </Border>
 
                             <!-- A pinned image survives retention pruning. -->
-                            <Border Background="#B0000000" CornerRadius="3"
+                            <Border Background="{StaticResource Scrim}" CornerRadius="{StaticResource RadiusControl}"
                                     Padding="5,1" Margin="6"
                                     HorizontalAlignment="Right" VerticalAlignment="Top"
                                     Visibility="{Binding Pinned,
@@ -58,7 +58,7 @@
                                TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}"/>
 
                     <TextBlock Margin="8,2,8,6" FontSize="10"
-                               Foreground="{StaticResource TextDim}"
+                               Foreground="{StaticResource TextMuted}"
                                Text="{Binding Kind}"/>
                 </StackPanel>
             </Border>
@@ -66,8 +66,8 @@
 
         <!-- Playlist row -->
         <DataTemplate x:Key="PlaylistRow">
-            <Border Padding="8,6" Margin="0,0,0,4" CornerRadius="4"
-                    Background="{StaticResource BgRaised}"
+            <Border Padding="8,6" Margin="0,0,0,4" CornerRadius="{StaticResource RadiusControl}"
+                    Background="{StaticResource Panel2}"
                     BorderBrush="{StaticResource Line}" BorderThickness="1">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -76,8 +76,8 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
-                    <Border Grid.Column="0" Height="26" CornerRadius="3"
-                            Background="{StaticResource BgSunken}" ClipToBounds="True">
+                    <Border Grid.Column="0" Height="26" CornerRadius="{StaticResource RadiusControl}"
+                            Background="{StaticResource Bg}" ClipToBounds="True">
                         <Image Source="{Binding Thumbnail}" Stretch="Uniform"/>
                     </Border>
 
@@ -96,10 +96,10 @@
                                      TextAlignment="Center"
                                      ToolTip="Seconds to show this image before moving on"/>
                             <TextBlock Text="s" Margin="3,0,0,0" VerticalAlignment="Center"
-                                       Foreground="{StaticResource TextDim}"/>
+                                       Foreground="{StaticResource TextMuted}"/>
                         </StackPanel>
                         <TextBlock Text="video" FontSize="11" VerticalAlignment="Center"
-                                   Foreground="{StaticResource TextDim}"
+                                   Foreground="{StaticResource TextMuted}"
                                    Visibility="{Binding IsVideo,
                                        Converter={StaticResource BoolToVisibility}}"/>
                     </StackPanel>
@@ -120,7 +120,7 @@
 
         <!-- ============ status bar ============ -->
         <Border Grid.Row="0" Grid.ColumnSpan="2" Margin="0,0,0,12" Padding="12,9"
-                CornerRadius="6" Background="{StaticResource BgRaised}"
+                CornerRadius="{StaticResource RadiusPanel}" Background="{StaticResource Panel}"
                 BorderBrush="{StaticResource Line}" BorderThickness="1">
             <Grid>
                 <Grid.RowDefinitions>
@@ -136,12 +136,12 @@
                     </Grid.ColumnDefinitions>
 
                     <Ellipse x:Name="StatusDot" Grid.Column="0" Width="9" Height="9"
-                             VerticalAlignment="Center" Margin="0,0,9,0" Fill="{StaticResource Danger}"/>
+                             VerticalAlignment="Center" Margin="0,0,9,0" Fill="{StaticResource Error}"/>
 
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                         <TextBlock x:Name="StatusText" Text="Starting…" FontWeight="SemiBold"/>
                         <TextBlock x:Name="StatusDetail" FontSize="11"
-                                   Foreground="{StaticResource TextDim}"
+                                   Foreground="{StaticResource TextMuted}"
                                    TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
 
@@ -161,8 +161,8 @@
                      it. Generation is slow and mostly invisible, so what stage
                      it is at is the single most useful thing to show. -->
                 <Border x:Name="AiBar" Grid.Row="1" Margin="0,9,0,0" Padding="10,7"
-                        CornerRadius="4" Background="{StaticResource BgSunken}"
-                        BorderBrush="{StaticResource AccentDim}" BorderThickness="1"
+                        CornerRadius="{StaticResource RadiusControl}" Background="{StaticResource Bg}"
+                        BorderBrush="{StaticResource Line2}" BorderThickness="1"
                         Visibility="Collapsed">
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -173,13 +173,13 @@
 
                         <Ellipse x:Name="AiDot" Grid.Column="0" Width="8" Height="8"
                                  VerticalAlignment="Center" Margin="0,0,9,0"
-                                 Fill="{StaticResource AccentDim}"/>
+                                 Fill="{StaticResource TextMuted}"/>
 
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock x:Name="AiStatusText" FontSize="12" FontWeight="SemiBold"
                                        TextTrimming="CharacterEllipsis"/>
                             <TextBlock x:Name="AiPromptText" FontSize="11" Margin="0,2,0,0"
-                                       Foreground="{StaticResource TextDim}"
+                                       Foreground="{StaticResource TextMuted}"
                                        TextTrimming="CharacterEllipsis"
                                        Visibility="Collapsed"/>
                         </StackPanel>
@@ -194,7 +194,7 @@
 
         <!-- ============ library ============ -->
         <Border Grid.Row="1" Grid.Column="0" Margin="0,0,12,0" Padding="12"
-                CornerRadius="6" Background="#1A1712"
+                CornerRadius="{StaticResource RadiusPanel}" Background="{StaticResource Panel}"
                 BorderBrush="{StaticResource Line}" BorderThickness="1">
             <Grid>
                 <Grid.RowDefinitions>
@@ -219,7 +219,7 @@
 
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                         <Button x:Name="AddFilesButton" Content="Add files…"
-                                Style="{StaticResource Btn}" Click="OnAddFiles"/>
+                                Style="{StaticResource Btn}" Margin="0,0,8,0" Click="OnAddFiles"/>
                         <Button x:Name="DownloadButton" Content="Download…"
                                 Style="{StaticResource Btn}" Margin="0,0,8,0"
                                 Click="OnDownload"
@@ -273,7 +273,7 @@
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="ListBoxItem">
-                                        <Border x:Name="sel" CornerRadius="7" Padding="2"
+                                        <Border x:Name="sel" CornerRadius="{StaticResource RadiusPanel}" Padding="2"
                                                 BorderThickness="2" BorderBrush="Transparent">
                                             <ContentPresenter/>
                                         </Border>
@@ -292,7 +292,7 @@
 
                 <TextBlock x:Name="EmptyHint" Grid.Row="1"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
-                           TextAlignment="Center" Foreground="{StaticResource TextDim}"
+                           TextAlignment="Center" Foreground="{StaticResource TextMuted}"
                            Text="Drop images and videos here,&#x0a;or use Add files."/>
 
                 <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,10,0,0">
@@ -316,21 +316,21 @@
             </Grid.RowDefinitions>
 
             <!-- now playing -->
-            <Border Grid.Row="0" Padding="12" Margin="0,0,0,12" CornerRadius="6"
-                    Background="#1A1712" BorderBrush="{StaticResource Line}" BorderThickness="1">
+            <Border Grid.Row="0" Padding="12" Margin="0,0,0,12" CornerRadius="{StaticResource RadiusPanel}"
+                    Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1">
                 <StackPanel>
                     <TextBlock Text="ON THE PANEL" Style="{StaticResource Heading}"/>
 
                     <!-- Fixed 2:1, matching the panel, so the preview is a true
                          picture of the glass rather than a letterboxed guess. -->
                     <Viewbox Stretch="Uniform">
-                        <Border Width="960" Height="480" CornerRadius="4"
-                                Background="Black" ClipToBounds="True">
+                        <Border Width="960" Height="480" CornerRadius="{StaticResource RadiusControl}"
+                                Background="{StaticResource Glass}" ClipToBounds="True">
                             <Grid>
                                 <Image x:Name="PreviewImage" Stretch="Fill"/>
                                 <TextBlock x:Name="PreviewPlaceholder"
                                            Text="nothing on screen"
-                                           FontSize="34" Foreground="#3A332A"
+                                           FontSize="34" Foreground="{StaticResource Line2}"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Grid>
                         </Border>
@@ -347,7 +347,7 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="TimelinePosition" Grid.Column="0" FontSize="11"
                                    VerticalAlignment="Center" MinWidth="38"
-                                   Foreground="{StaticResource TextDim}"/>
+                                   Foreground="{StaticResource TextMuted}"/>
                         <Slider x:Name="TimelineSlider" Grid.Column="1" Margin="8,0"
                                 Minimum="0" Maximum="1" VerticalAlignment="Center"
                                 IsMoveToPointEnabled="True"
@@ -357,16 +357,16 @@
                         <TextBlock x:Name="TimelineDuration" Grid.Column="2" FontSize="11"
                                    VerticalAlignment="Center" MinWidth="38"
                                    TextAlignment="Right"
-                                   Foreground="{StaticResource TextDim}"/>
+                                   Foreground="{StaticResource TextMuted}"/>
                     </Grid>
 
                     <TextBlock x:Name="PlaybackStats" Margin="0,8,0,0" FontSize="11"
-                               Foreground="{StaticResource TextDim}"/>
+                               Foreground="{StaticResource TextMuted}"/>
 
                     <!-- What was asked for, when the panel is showing something
                          the pipeline made. -->
                     <TextBlock x:Name="PanelPromptText" Margin="0,6,0,0" FontSize="11"
-                               Foreground="{StaticResource TextDim}"
+                               Foreground="{StaticResource TextMuted}"
                                TextWrapping="Wrap" MaxHeight="48"
                                Visibility="Collapsed"/>
 
@@ -375,13 +375,13 @@
                          diagnostic surface for the feature — "it's showing the
                          wrong video" is unanswerable without it. -->
                     <Border x:Name="MusicPanel" Margin="0,8,0,0" Padding="8,6"
-                            CornerRadius="4" Background="#14FFFFFF"
+                            CornerRadius="{StaticResource RadiusControl}" Background="{StaticResource Panel2}"
                             Visibility="Collapsed">
                         <StackPanel>
                             <TextBlock x:Name="MusicSummary" FontSize="12"
                                        TextTrimming="CharacterEllipsis"/>
                             <TextBlock x:Name="MusicDetail" Margin="0,2,0,0" FontSize="11"
-                                       Foreground="{StaticResource TextDim}"
+                                       Foreground="{StaticResource TextMuted}"
                                        TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
                     </Border>
@@ -393,7 +393,7 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Brightness" VerticalAlignment="Center"
-                                   Foreground="{StaticResource TextDim}"/>
+                                   Foreground="{StaticResource TextMuted}"/>
                         <!-- Clicking the track goes to the click, rather than
                              stepping one tick towards it. See the frame rate
                              slider in Settings for the same reason. -->
@@ -421,8 +421,8 @@
             </Border>
 
             <!-- playlist -->
-            <Border Grid.Row="1" Padding="12" CornerRadius="6"
-                    Background="#1A1712" BorderBrush="{StaticResource Line}" BorderThickness="1">
+            <Border Grid.Row="1" Padding="12" CornerRadius="{StaticResource RadiusPanel}"
+                    Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -451,14 +451,14 @@
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="ListBoxItem">
-                                            <Border x:Name="sel" CornerRadius="5"
+                                            <Border x:Name="sel" CornerRadius="{StaticResource RadiusPanel}"
                                                     BorderThickness="2" BorderBrush="Transparent">
                                                 <ContentPresenter/>
                                             </Border>
                                             <ControlTemplate.Triggers>
                                                 <Trigger Property="IsSelected" Value="True">
                                                     <Setter TargetName="sel" Property="BorderBrush"
-                                                            Value="{StaticResource AccentDim}"/>
+                                                            Value="{StaticResource Accent}"/>
                                                 </Trigger>
                                             </ControlTemplate.Triggers>
                                         </ControlTemplate>
@@ -470,7 +470,7 @@
 
                     <TextBlock Grid.Row="1" x:Name="PlaylistEmptyHint"
                                HorizontalAlignment="Center" VerticalAlignment="Center"
-                               TextAlignment="Center" Foreground="{StaticResource TextDim}"
+                               TextAlignment="Center" Foreground="{StaticResource TextMuted}"
                                Text="Pick items on the left and&#x0a;choose Add to playlist."/>
 
                     <StackPanel Grid.Row="2" Margin="0,10,0,0">

@@ -10,6 +10,7 @@ using JLDisplayManager.Services.Overlay;
 
 using ColorDialog = System.Windows.Forms.ColorDialog;
 using DialogResult = System.Windows.Forms.DialogResult;
+using JLDisplayManager.Themes;
 
 namespace JLDisplayManager.Views.Overlay;
 
@@ -301,7 +302,7 @@ public sealed class PropertyPanel : StackPanel
         TextWrapping = TextWrapping.Wrap,
         FontSize = 11,
         Margin = new Thickness(0, 0, 0, 8),
-        Foreground = new SolidColorBrush(Color.FromRgb(0x9B, 0x8F, 0x80)),
+        Foreground = Theme.Brush("TextMuted"),
     };
 
     private void Row(UIElement a, UIElement b)
@@ -333,7 +334,7 @@ public sealed class PropertyPanel : StackPanel
             Text = label,
             FontSize = 11,
             Margin = new Thickness(0, 0, 0, 2),
-            Foreground = new SolidColorBrush(Color.FromRgb(0x9B, 0x8F, 0x80)),
+            Foreground = Theme.Brush("TextMuted"),
         });
         sp.Children.Add(editor);
         Children.Add(sp);
@@ -490,9 +491,9 @@ public sealed class PropertyPanel : StackPanel
         {
             Width = 24,
             Height = 22,
-            CornerRadius = new CornerRadius(3),
+            CornerRadius = (CornerRadius)Application.Current.FindResource("RadiusControl"),
             BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x33, 0x2C, 0x24)),
+            BorderBrush = Theme.Brush("Line2"),
             Margin = new Thickness(0, 0, 6, 0),
             Cursor = System.Windows.Input.Cursors.Hand,
         };

@@ -21,7 +21,7 @@
                  ToolTip="A single video link. Playlists are not downloaded."/>
 
         <TextBlock x:Name="HintText" Grid.Row="2" FontSize="11" TextWrapping="Wrap"
-                   Foreground="{StaticResource TextDim}" Margin="0,10,0,0"/>
+                   Foreground="{StaticResource TextMuted}" Margin="0,10,0,0"/>
 
         <StackPanel x:Name="ProgressPanel" Grid.Row="3" Margin="0,10,0,0"
                     Visibility="Collapsed">
@@ -29,11 +29,11 @@
                  before the first byte arrives take a few seconds on their own,
                  and a bar sitting at zero reads as a hang. -->
             <ProgressBar x:Name="ProgressBar" Height="6" IsIndeterminate="True"
-                         Background="{StaticResource BgSunken}"
+                         Background="{StaticResource Bg}"
                          Foreground="{StaticResource Accent}"
                          BorderBrush="{StaticResource Line}" BorderThickness="1"/>
             <TextBlock x:Name="ProgressText" FontSize="11" TextWrapping="Wrap"
-                       Foreground="{StaticResource TextDim}" Margin="0,6,0,0"/>
+                       Foreground="{StaticResource TextMuted}" Margin="0,6,0,0"/>
         </StackPanel>
 
         <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right"
