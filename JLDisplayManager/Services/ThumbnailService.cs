@@ -92,9 +92,8 @@ public static class ThumbnailService
         {
             UseShellExecute = false,
             CreateNoWindow = true,
-            RedirectStandardError = true,
-            RedirectStandardOutput = true,
         };
+        psi.ArgumentList.Add("-nostdin");   // its console is a hidden one; never read keys from it
         psi.ArgumentList.Add("-y");
         psi.ArgumentList.Add("-loglevel"); psi.ArgumentList.Add("error");
         psi.ArgumentList.Add("-ss"); psi.ArgumentList.Add("1");
@@ -105,14 +104,12 @@ public static class ThumbnailService
                              $"pad={Width}:{Height}:(ow-iw)/2:(oh-ih)/2:color=black");
         psi.ArgumentList.Add(destination);
 
-        using var process = Process.Start(psi);
-        if (process is null) return false;
-
-        await process.WaitForExitAsync().ConfigureAwait(false);
+        if (!await RunAsync(psi).ConfigureAwait(false) && File.Exists(destination))
+            File.Delete(destination);
 
         // A video shorter than the seek point produces nothing; retry from the
         // very start before giving up.
-        if (process.ExitCode != 0 || !File.Exists(destination))
+        if (!File.Exists(destination))
             return await ExtractFirstFrameAsync(ffmpeg, source, destination).ConfigureAwait(false);
 
         return true;
@@ -124,9 +121,8 @@ public static class ThumbnailService
         {
             UseShellExecute = false,
             CreateNoWindow = true,
-            RedirectStandardError = true,
-            RedirectStandardOutput = true,
         };
+        psi.ArgumentList.Add("-nostdin");   // its console is a hidden one; never read keys from it
         psi.ArgumentList.Add("-y");
         psi.ArgumentList.Add("-loglevel"); psi.ArgumentList.Add("error");
         psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(source);
@@ -136,11 +132,38 @@ public static class ThumbnailService
                              $"pad={Width}:{Height}:(ow-iw)/2:(oh-ih)/2:color=black");
         psi.ArgumentList.Add(destination);
 
+        return await RunAsync(psi).ConfigureAwait(false) && File.Exists(destination);
+    }
+
+    /// <summary>How long one frame grab may take before it is given up on.</summary>
+    private static readonly TimeSpan FfmpegTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Runs one ffmpeg to completion, or kills it at <see cref="FfmpegTimeout"/>.
+    ///
+    /// Its output is not redirected. It used to be, into pipes nothing read,
+    /// so a damaged file that made ffmpeg log more than a pipe buffer of decode
+    /// errors left it blocked on the write forever - holding the source file
+    /// open, and the thumbnail never arriving. -loglevel error keeps the output
+    /// short and nobody looks at it; the exit code is the answer.
+    /// </summary>
+    private static async Task<bool> RunAsync(ProcessStartInfo psi)
+    {
         using var process = Process.Start(psi);
         if (process is null) return false;
 
-        await process.WaitForExitAsync().ConfigureAwait(false);
-        return process.ExitCode == 0 && File.Exists(destination);
+        using var timeout = new System.Threading.CancellationTokenSource(FfmpegTimeout);
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            return process.ExitCode == 0;
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            Storage.Log($"thumbnail: ffmpeg gave no answer in {FfmpegTimeout.TotalSeconds:0}s, stopped it");
+            return false;
+        }
     }
 
     /// <summary>
