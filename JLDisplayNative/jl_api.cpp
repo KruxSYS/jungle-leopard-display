@@ -16,6 +16,15 @@
 #include <string>
 #include <vector>
 
+// The managed side (Interop/NativeMethods.cs) copies these structs by layout,
+// and VerifyLayout() checks ITS sizes against these same figures at startup.
+// That only catches a change made on the C# side; these catch one made here.
+// Change a struct and both of these, and VerifyLayout, move together - see
+// AGENTS.md.
+static_assert(sizeof(JlRenderOpts) == 100, "JlRenderOpts changed: update NativeMethods.cs and VerifyLayout()");
+static_assert(sizeof(JlStatus) == 1184, "JlStatus changed: update NativeMethods.cs and VerifyLayout()");
+static_assert(sizeof(JlMediaStatus) == 1832, "JlMediaStatus changed: update NativeMethods.cs and VerifyLayout()");
+
 namespace {
 
     // -----------------------------------------------------------------------
