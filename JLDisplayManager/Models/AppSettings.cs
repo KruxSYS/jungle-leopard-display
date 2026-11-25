@@ -487,10 +487,37 @@ public static class Storage
         }
         catch (Exception ex)
         {
-            // A corrupt settings file must not stop the app from starting; the
-            // worst case is that it comes up with defaults.
-            Log($"could not read {Path.GetFileName(path)}: {ex.Message}");
+            // A corrupt settings file must not stop the app from starting, so
+            // it comes up with defaults - but the file is moved aside first.
+            // Left where it was, the next save (any edit, or quitting) would
+            // write those defaults over it, and a library that failed to parse
+            // once - a crash mid-write on an old version, a disk hiccup, a file
+            // from a newer release - would be gone for good instead of being
+            // one rename away from recovery.
+            string kept = Quarantine(path);
+            Log($"could not read {Path.GetFileName(path)}: {ex.Message}" +
+                (kept.Length > 0 ? $" - kept it as {Path.GetFileName(kept)}" : ""));
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Renames an unreadable file to <c>name.corrupt-yyyyMMdd-HHmmss</c> beside
+    /// it and returns the new path, or "" if it could not be moved.
+    /// </summary>
+    internal static string Quarantine(string path)
+    {
+        try
+        {
+            string target = $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}";
+            for (int n = 2; File.Exists(target); n++)
+                target = $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}-{n}";
+            File.Move(path, target);
+            return target;
+        }
+        catch
+        {
+            return "";
         }
     }
 
