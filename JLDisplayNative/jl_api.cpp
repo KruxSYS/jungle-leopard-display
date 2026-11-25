@@ -111,8 +111,15 @@ namespace {
         DWORD    lastFrameAt = 0;
         DWORD    itemStartedAt = 0;   // for the running fps average
 
-        // Resolved once per open and reused: asking ffmpeg what it supports
+        // Resolved once per process and reused: asking ffmpeg what it supports
         // costs a process launch, and the answer cannot change while we run.
+        //
+        // Under its own lock, because three threads want it: the UI thread
+        // starting an item (under `cmd`), and the device-free jl_preprocess and
+        // jl_pack_ready, which take no session lock on purpose and are called
+        // from background threads at the same time. Unlocked, two of them could
+        // write the string at once. See ResolvedAuto().
+        CRITICAL_SECTION hw{};
         std::wstring hwaccelResolved;
         bool         hwaccelKnown = false;
 
@@ -135,6 +142,7 @@ namespace {
             InitializeCriticalSection(&cmd);
             InitializeCriticalSection(&state);
             InitializeCriticalSection(&child);
+            InitializeCriticalSection(&hw);
         }
     };
 
@@ -321,6 +329,19 @@ namespace {
     // jl_pack_ready — because they have to agree with each other exactly: the
     // pack cache keys on these, so a field translated differently in one of
     // them means asking about a pack nobody built.
+    // What "auto" hwaccel means on this machine, decided once. The first
+    // caller launches ffmpeg to ask; everyone else waits for that answer
+    // rather than asking again or reading a string half-written.
+    std::wstring ResolvedAuto()
+    {
+        Guard lock(g.hw);
+        if (!g.hwaccelKnown) {
+            g.hwaccelResolved = jl::ResolveHwaccel(jl::FindFfmpeg(), L"auto");
+            g.hwaccelKnown = true;
+        }
+        return g.hwaccelResolved;
+    }
+
     bool OptsFromApi(const JlRenderOpts& in, jl::RenderOpts& out)
     {
         out.stretch = in.stretch != 0;
@@ -340,13 +361,7 @@ namespace {
         std::wstring problem;
         if (!jl::ValidateOpts(out, problem)) return false;
 
-        if (out.hwaccel == L"auto") {
-            if (!g.hwaccelKnown) {
-                g.hwaccelResolved = jl::ResolveHwaccel(jl::FindFfmpeg(), L"auto");
-                g.hwaccelKnown = true;
-            }
-            out.hwaccel = g.hwaccelResolved;
-        }
+        if (out.hwaccel == L"auto") out.hwaccel = ResolvedAuto();
 
         return true;
     }
@@ -620,13 +635,7 @@ namespace {
 
         // Resolve "auto" once for the life of the session rather than launching
         // ffmpeg to ask the same question for every item.
-        if (o.hwaccel == L"auto") {
-            if (!g.hwaccelKnown) {
-                g.hwaccelResolved = jl::ResolveHwaccel(jl::FindFfmpeg(), L"auto");
-                g.hwaccelKnown = true;
-            }
-            o.hwaccel = g.hwaccelResolved;
-        }
+        if (o.hwaccel == L"auto") o.hwaccel = ResolvedAuto();
 
         StopWorkerLocked();
 
