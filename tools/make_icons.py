@@ -133,7 +133,7 @@ def main() -> None:
                    INSTALLER / f"wizard-{suffix}.bmp")
             small_px = 55 * scale
             to_bmp(render(MAIN, small_px, small_px, tmp / f"wizard-small-{suffix}.png"),
-                   INSTALLER / f"wizard-small-{suffix}.bmp", bg="#ffffff")
+                   INSTALLER / f"wizard-small-{suffix}.bmp")   # dark wizard header
 
     print("make_icons: wrote app.ico (x2), 3 PNGs, 4 wizard BMPs")
 
