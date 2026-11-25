@@ -166,6 +166,23 @@ namespace jl {
             error = L"quality ceiling must be 50-98 percent";
             return false;
         }
+
+        // The method name goes onto ffmpeg's command line as it is, unquoted
+        // ("-hwaccel <name>"), so it may only be a name. Anything with a space
+        // or a quote in it would be extra ffmpeg arguments - an output file,
+        // say - rather than a decoder. Every real one is lower-case letters
+        // and digits: cuda, qsv, d3d11va, dxva2, vulkan, auto, none.
+        if (opts.hwaccel.size() > 31) {
+            error = L"hwaccel must be a method name such as cuda, qsv or d3d11va";
+            return false;
+        }
+        for (wchar_t c : opts.hwaccel) {
+            const bool ok = (c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == L'_';
+            if (!ok) {
+                error = L"hwaccel must be a method name such as cuda, qsv or d3d11va";
+                return false;
+            }
+        }
         return true;
     }
 
