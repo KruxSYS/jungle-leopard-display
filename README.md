@@ -1,539 +1,150 @@
-# Jungle Leopard Display
+<!--
+  Brand: KruxSYS palette and marks, see docs/brand.md.
+  The repository address is defined once, in the [repo] / [releases] reference links at the bottom.
+-->
+<p align="center">
+  <img src="assets/brand/jungle-leopard.svg" width="96" height="96" alt="Jungle Leopard Display logo">
+</p>
 
-Drive a **TZMRIT PF360 / "Jungle Leopard" pump LCD** — the 960×480 panel on the
-head of an AIO cooler — from Windows, without the vendor's Electron app.
+<h1 align="center">Jungle Leopard Display</h1>
 
-Ships two programs over one shared core:
+<p align="center">
+  <a href="https://kruxsys.com/"><img src="assets/brand/kruxsys.svg" width="20" height="20" alt="" align="absmiddle"></a>
+  &nbsp;by <a href="https://kruxsys.com/"><b>KruxSYS</b></a>
+</p>
 
-- **Display Manager** — a tray app that holds the panel permanently, with a
-  media library, a playlist, system-statistic overlays drawn over whatever is
-  playing, a mode that follows whatever music is playing elsewhere on the
-  machine, an optional AI image pipeline, a live preview of what's on the glass,
-  and an optional start-at-logon task.
-- **`Jungle Leopard Display.exe`** — the original command-line tool, for
-  scripting and one-shot use.
+<p align="center"><b>Drive the TZMRIT PF360 "Jungle Leopard" pump LCD from Windows, without the vendor's app.</b></p>
 
-![The display manager, mid-playlist](docs/screenshot.png)
+<div align="center">
 
-The protocol was recovered from the vendor app's `resources/app.asar`
-(`main/_baseClass/device.js`) and verified against firmware **3.1**, model
-`TXW818-ST7701S-5.5inch-hor`. See [Protocol notes](#protocol-notes).
+[![Status: active development](https://img.shields.io/badge/status-active%20development-ffb547?style=flat-square&labelColor=0c1016)][releases]
+[![by KruxSYS](https://img.shields.io/badge/by-KruxSYS-22d3ee?style=flat-square&labelColor=0c1016)](https://kruxsys.com/)
+[![Download from GitHub Releases](https://img.shields.io/badge/download-GitHub%20Releases-22d3ee?style=flat-square&labelColor=0c1016)][releases]
+[![Version 1.7.0](https://img.shields.io/badge/version-1.7.0-2a3442?style=flat-square&labelColor=0c1016)][releases]
+[![Windows 10 and 11, x64](https://img.shields.io/badge/Windows%2010%20%2F%2011-x64-2a3442?style=flat-square&labelColor=0c1016)](#requirements)
 
----
+**[Download][releases]** · **[Docs](#documentation)** · **[kruxsys.com](https://kruxsys.com/)** · **[Source][repo]**
+
+</div>
+
+Jungle Leopard Display puts your pictures, videos, system statistics and whatever music you're
+playing on the 960×480 LCD in the head of a TZMRIT PF360 ("Jungle Leopard") AIO cooler. It replaces
+the vendor's Electron app with a small native Windows 10/11 x64 tray app and a command-line tool,
+shipped as an **installer** and a **portable zip**.
+
+*Formerly at [senesees/Jungle-Leopard-Display-TZMRIT-PF360-LCD](https://github.com/senesees/Jungle-Leopard-Display-TZMRIT-PF360-LCD).
+Since 1.7.0 it is a KruxSYS product. Your library, settings and caches carry over untouched.*
+
+![The display manager: library, playlist and the panel preview](docs/screenshot.png)
+
+## Features
+
+- **Library and playlist.** Drag in images and videos, or fetch a video from YouTube, then show one
+  or rotate through a playlist with per-image dwell times and shuffle.
+- **Preprocessing.** Each video is transcoded once into panel-ready frames, at the best JPEG quality
+  each frame can afford within a data rate the panel can keep up with. After that, playback runs with
+  no ffmpeg at all. [More](docs/preprocessing.md)
+- **Overlays.** Clocks, CPU/GPU load and temperatures, graphs, gauges, images and text, composited
+  live over whatever is playing. They're built in a canvas editor with undo, or described in a sentence
+  to a local AI model. [More](docs/overlays.md)
+- **Follow what's playing.** Mirrors the music playing elsewhere on the machine (a YouTube Music tab,
+  a desktop player): the music video when one can be found, a now-playing card when not.
+  [More](docs/music.md)
+- **AI image pipeline** (optional). Generates a stream of images with your own SwarmUI server and puts
+  them on the panel. [More](docs/ai-pipeline.md)
+- **Stays out of the way.** It lives in the notification area, can start when you sign in, survives
+  sleep and wake, and reconnects when the panel comes back.
+- **A command-line tool** for scripting and one-shot use, on the same native core.
+
+| Settings | About |
+|---|---|
+| ![Settings: picture, decoding and preprocessing](docs/settings.png) | ![Settings, About: version, links and the KruxSYS credit](docs/about.png) |
+| **Overlay editor** | **An overlay on the panel** |
+| ![The overlay editor](docs/editor.png) | ![An overlay over video, as sent to the panel](docs/overlay.png) |
+
+*Screenshots of the app were taken with no panel attached, which is why the preview is empty. The
+overlay image is the panel's own output.*
+
+## Install
+
+### Installer (recommended)
+
+Download `JungleLeopardDisplay-<version>-win-x64-setup.exe` from [Releases][releases] and run it.
+
+- It installs **for your account only**, into `%LOCALAPPDATA%\Programs\Jungle Leopard Display`, with no
+  admin prompt. Choose *Install for all users* in the first dialog to install into Program Files
+  instead (that one asks for admin).
+- It adds a Start menu entry, an optional desktop icon and an entry in *Settings → Apps*.
+- If the **.NET 9 Desktop Runtime** or **ffmpeg** is missing, it says so and gives the download link
+  and the `winget` command. Neither is bundled.
+
+The installer is **not code-signed**, so Windows SmartScreen may warn the first time. Choose
+*More info → Run anyway*.
+
+### Portable
+
+Download `JungleLeopardDisplay-<version>-win-x64-portable.zip`, unzip it anywhere and run
+`JungleLeopardDisplayManager.exe`. It writes no registry keys and needs nothing installed beyond the
+[requirements](#requirements).
+
+### Update
+
+Run the new installer over the old one, or replace the portable folder's files. The installer closes a
+running manager first. Your data stays where it was in either case.
+
+### Uninstall
+
+Use *Settings → Apps → Jungle Leopard Display → Uninstall* (or delete the portable folder). The
+uninstaller also removes the "Start when I sign in" task. Your library, playlist, settings and
+overlays in `%LOCALAPPDATA%\JungleLeopardDisplay`, and preprocessed frames in
+`%LOCALAPPDATA%\jl_display`, are **kept**. Delete those folders to remove them too.
 
 ## Requirements
 
 | | |
 |---|---|
 | **OS** | Windows 10/11, **x64 only** |
-| **Runtime** | [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0) — for the manager only; the CLI is native |
+| **Runtime** | [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0) (`winget install Microsoft.DotNet.DesktopRuntime.9`), for the manager only; the CLI is native |
 | **ffmpeg** | `winget install "FFmpeg (Essentials Build)"`, or drop `ffmpeg.exe` beside the binaries |
-| **Build** | Visual Studio 2022 (v143 toolset) + .NET 9 SDK |
+| **Panel** | TZMRIT PF360 / "Jungle Leopard", verified against firmware **3.1**, model `TXW818-ST7701S-5.5inch-hor` |
 
-ffmpeg does all transcoding. Without it, the only thing that can be displayed is
-an image that is *already* a 960×480 JPEG under 80 KB. `ffprobe` is optional —
-without it, calibration reports elapsed time instead of progress.
+ffmpeg does all transcoding. Without it, the only thing that can be displayed is an image that is
+*already* a 960×480 JPEG under 80 KB. `ffprobe` is optional. Without it, calibration reports elapsed
+time instead of progress.
 
-> **Only one process can hold the panel at a time.** Close the vendor app before
-> using either program, and don't run the CLI and the manager together — the
-> manager has a **Release device** button for exactly this.
+> **Only one process can hold the panel at a time.** Close the vendor app before using either program,
+> and don't run the CLI and the manager together. The manager has a **Release device** button for
+> exactly this.
 
----
+## Usage
 
-## Download
+### The manager
 
-A portable x64 build is attached to each [release][releases]: unzip anywhere and
-run, no installer and no registry keys. It carries the tray app, the CLI and the
-native core — under a megabyte between them — plus `yt-dlp.exe`, which is most of
-the download. It still wants the two prerequisites above, since neither the .NET
-runtime nor ffmpeg is bundled.
-
-[releases]: https://github.com/senesees/Jungle-Leopard-Display-TZMRIT-PF360-LCD/releases
-
----
-
-## Building
-
-```sh
-msbuild "Jungle Leopard Display.sln" -p:Configuration=Release -p:Platform=x64 -restore
-```
-
-Release builds emit **no PDBs** — `DebugInformationFormat` is `None` and
-`GenerateDebugInformation` is `false` for every Release configuration, and the
-manager sets `DebugType=none`. Debug configurations keep their symbols, though
-the solution maps `Debug|x64` onto `Release|x64` for every project, so a plain
-solution build never produces any.
-
-Everything lands in `x64\Release\`, native and managed together, so
-`DllImport` resolves with no probing paths.
-
----
-
-## Using the manager
-
-Run `x64\Release\JungleLeopardDisplayManager.exe`. It finds the panel by
-hardware ID, connects, and sits in the notification area.
+Start **Jungle Leopard Display** from the Start menu. It finds the panel by hardware ID, connects, and
+sits in the notification area.
 
 - **Add files…**, or drag images and videos onto the window.
-- **Download…** takes a YouTube URL and fetches the video into the library.
-  `yt-dlp.exe` ships beside the manager, so nothing needs installing first.
+- **Download…** takes a YouTube URL and fetches the video into the library. `yt-dlp.exe` ships beside
+  the manager, so nothing needs installing first.
 - Select an item and **Show now**, or double-click it.
-- **Add to playlist** to build a rotation, then **Play playlist**. Stills hold
-  for their dwell in seconds; videos play through and hand over.
-- Closing the window hides it — the panel keeps running. **Exit** on the tray
-  menu is the only thing that stops it.
-
-New videos are calibrated in the background as they're added, so pressing Show
-later is instant.
-
-### Settings
-
-![Settings](docs/settings.png)
-
-**Rotation** compensates for however the pump head ended up mounted — it rotates
-270° on its magnet and there is no device-side rotation command, so this is done
-host-side (as the vendor app does).
-
-**Start when I sign in** registers a logon-triggered scheduled task rather than a
-`Run` key, which buys restart-on-failure and no "stop on battery". The checkbox
-reads the real registered state, so removing the task outside the app is
-reflected honestly.
-
-**Preprocessing** decides whether ffmpeg runs for as long as something is on the
-panel, or only once per item. See below.
-
----
-
-## Preprocessing
-
-The panel is not a display — it is an MJPEG sink. Everything it accepts is one
-fixed shape: 960×480, baseline 4:2:0, under 80 KB, arriving at a steady rate. So
-what ffmpeg produces for a given source is a pure function of that source's bytes
-and the render options, which is the same assumption the calibration cache has
-always made. Those frames can therefore be computed once and replayed.
-
-| Mode | What happens | Cost |
-|---|---|---|
-| **Off** | ffmpeg streams MJPEG for as long as the item plays | a running ffmpeg, always |
-| **Memory** | frames built into RAM once, then ffmpeg exits | ~1.2 MB/s of RAM, rebuilt each launch |
-| **Disk** | frames built into a pack file once, reused forever | ~70 MB per minute of video |
-
-**Memory** is the default. It writes nothing, and a source too long to hold
-falls back to streaming on its own — so its worst case is exactly the old
-behaviour.
-
-Both limits are settable in **Settings → Preprocessing**, which shows whichever
-one the selected mode actually uses (Off has none). Defaults are 512 MB in
-memory and 8 GB on disk, and each preset is labelled with roughly how much video
-it holds. The two limits behave differently on purpose: reaching the memory
-limit makes that one item stream instead, while reaching the disk limit evicts
-the least recently used packs. So raising the memory limit widens what benefits
-— it never decides what will play.
-
-A pack is deliberately dull: a header, the frame blobs, then an index. Identical
-frames share one blob and the index points at it more than once, which collapses
-GIFs and static footage to a fraction of their nominal size. Disk packs are
-memory-**mapped** rather than read, so a long video costs address space rather
-than working set, and the cache evicts least-recently-used once it passes its
-limit.
-
-### Quality per frame
-
-Calibration has to pick one `-q:v` for a whole file, set by its **busiest**
-frame, because a stream commits to a figure before it knows what is coming. A
-pack does not: nothing about the panel requires two frames to have been encoded
-the same way. So with **Give every frame the best quality it fits** on — the
-default — the builder encodes each frame at the best quality that still fits
-under 64 KB, and stores exactly that.
-
-What one frame may spend is **the data rate divided by the frame rate**, not the
-80 KB a single frame is allowed. That distinction is the whole of it: 80 KB is a
-per-frame maximum, and the panel cannot decode 30 of those a second. Not a link
-limit — writes measure 3 MB/s flat out — but the panel's own decoding, which
-takes longer for a bigger JPEG and gives no sign at all when it falls behind.
-Calibration never had to know, because `-q:v` stops at 3 and that lands near
-37 KB a frame here — about 1.1 MB/s, whatever the target said. Budget by rate
-instead and the same 1.1 MB/s buys a markedly better picture, because those
-bytes go where they are needed.
-
-Measured on a 30 s clip that calibrated to `-q:v 3`, against the source frames:
-
-| | pack | mean / peak frame | SSIM |
-|---|---|---|---|
-| one `-q:v` for the file | 32.3 MB | 36.8 / 51.8 KB | 0.911 – 0.954 |
-| per frame, 1.1 MB/s | 30.9 MB | 35.2 / 38.3 KB | 0.965 – 0.986 |
-| per frame, 1.4 MB/s | 42.7 MB | 48.5 / 63.9 KB | 0.982 – 0.991 |
-
-The default is the middle of the five offered: better on every frame measured,
-in slightly **fewer** bytes than the uniform pack and with a third off the peak
-frame. The 1.4 MB/s row is sharper again and is offered, but it is past what
-this panel decodes in time — it stutters. Since nothing detects that but your
-own eyes, raise it only while watching the panel.
-
-There are two rates **below** the default as well, because 1.1 MB/s is a default
-and not a floor. It was measured on one panel against one kind of content, and
-what exhausts a panel's decoder is density — foliage, gravel, rain, anything
-without a flat region to compress. If a particular video still hitches at the
-default, the next thing to try is 0.9 MB/s, not a different setting.
-
-Two more consequences: frames are encoded by **WIC** rather than ffmpeg, and a
-per-frame build skips calibration entirely — one pass over the file instead of
-two.
-
-Two more things worth knowing:
-
-- **The frame rate is part of what a frame is.** It is baked into the pack's key
-  along with rotation, stretch and either the calibrated quality or the
-  per-frame cap, so changing any of them rebuilds every pack. That is correct rather than wasteful — the old frames
-  really are the wrong frames — but it is why the frame-rate slider feels
-  expensive in Disk mode.
-- **Stills benefit too, in every mode but Off.** A still in a playlist used to be
-  re-transcoded on every rotation; now it is prepared once and remembered.
-
----
-
-## AI image pipeline
-
-The manager can generate its own wallpaper: you keep a list of short ideas, an
-LLM expands each into a full prompt, [SwarmUI][swarmui] renders it, and the
-result goes on the panel. **AI** on the status bar opens it.
-
-Everything is optional and off until configured — the app is exactly as it was
-if you never open that window.
-
-[swarmui]: https://github.com/mcmonkeyprojects/SwarmUI
-
-```
-prompts ──▶ LLM enhance ──▶ SwarmUI ──▶ generated\  ──▶ library
-                                            │
-                        buffer of ready images
-                                            │
-                            dwell timer ────┴──▶ panel
-```
-
-### What you need
-
-**SwarmUI**, running and reachable — the default install listens on
-`http://localhost:7801`. Press **Test** and the window fills its model, sampler
-and scheduler lists from that server, so you pick from what is actually
-installed rather than from a guess.
-
-**An LLM**, optionally. Two providers:
-
-| Provider | For |
-|---|---|
-| **OpenAI-compatible** | Ollama, LM Studio, llama.cpp, OpenRouter, OpenAI — anything at `/v1/chat/completions`. Works offline. |
-| **Anthropic** | Claude, via the Messages API. Needs a key. |
-
-Set the provider to **None** to send your prompts to the image model as written.
-Each provider remembers its own address, model and key, so switching between a
-local model and a hosted one to compare results doesn't make you retype
-anything.
-
-### Two clocks
-
-Generation on a home GPU takes anywhere from ten seconds to several minutes, so
-generating and displaying run independently:
-
-- **Keep ready ahead** — how many finished images to hold in reserve. A worker
-  tops the buffer up in the background.
-- **Show each for** — how long an image holds the panel.
-- **Generate no more than** — a floor on time between generations, so a fast
-  backend doesn't fill the disk in a minute. `0` generates as fast as the buffer
-  empties.
-
-The panel is never waiting on the backend: it rotates through what is already
-finished. If the buffer does run dry, the current image simply stays up.
-
-### Failure is not fatal
-
-The pipeline is meant to be left running for days, so nothing in it stops the
-slideshow permanently:
-
-- A failed enhancement **falls back to the prompt as written** and logs it — a
-  dead LLM costs picture quality, not the whole rotation. Tick *Skip generating
-  if enhancement fails* to prefer stopping instead.
-- A failed generation backs off, doubling from 15 s to a 5-minute cap, so an
-  unreachable server is a quiet line in the log rather than a request storm.
-- An expired SwarmUI session — which every restart of SwarmUI causes — is
-  renewed once and the request retried.
-- A disconnected panel picks its image back up when the device returns.
-
-Each leg has its own **Test** button, so a failure isolates to one hop rather
-than needing to be guessed at.
-
-### Where the images go
-
-Generated images land in `%LOCALAPPDATA%\JungleLeopardDisplay\generated\` and
-appear under **GENERATED**, the second tab above the media grid, with the prompt
-as the tooltip. They arrive on their own schedule and in bulk, so they get their
-own tab rather than burying the hand-picked library — but they are ordinary
-items otherwise, and can be shown, added to a playlist and pinned like anything
-else.
-
-**Keep at most** bounds how many are kept; past that the oldest go, file and
-all. **Pin** exempts one — pinned images are never pruned, and neither is
-whatever is currently on the panel or waiting in the buffer. **Remove** on the
-GENERATED tab deletes the file as well, since nothing else would ever list it
-again.
-
-### A note on keys
-
-API keys are encrypted with **DPAPI**, scoped to your Windows account, and
-stored as base64 in `ai.json`. A copied `ai.json` is useless on another machine
-or under another account. That is the whole guarantee: it stops a key
-travelling, not someone already running as you. A key is never displayed once
-saved — leave the box blank to keep it, type in it to replace it.
-
----
-
-## Overlays
-
-System statistics drawn on top of whatever is playing — CPU load, temperatures,
-clocks, network rates, a clock — as layers you arrange yourself, or describe in a
-sentence and let a model build.
-
-![An overlay over video](docs/overlay.png)
-
-The panel has no overlay plane and no alpha, so there is nothing to composite
-*onto*. Every frame is decoded, blended and re-encoded on the way past. That
-costs about 2 ms and it is why the overlay is a feature of the player rather
-than something bolted alongside it.
-
-The re-encode answers to the **same data rate** the pack builder does. That is
-worth saying because it did not always: the compositor used to steer on the
-80 KB per-frame cap instead, which works out to well over twice the default
-rate, and an overlay could quietly push a stream from 1.1 MB/s to 1.7 MB/s.
-Nothing reported it — the panel accepts every byte and falls behind in silence
-— so it showed up only as a picture that hitched with the overlay on and not
-without it. If you turn the overlay on and the picture softens slightly, that
-is this working: the rate is fixed, so the overlay's bytes have to come from
-somewhere.
-
-### Layers
-
-**Overlay** — on the tray menu, or the button in the main window — opens the
-editor.
-
-![The overlay editor](docs/editor.png)
-
-A profile is a stack of layers
-over the 960×480 surface, each anchored to a corner, edge or the centre so a
-readout pinned bottom-right stays there.
-
-| Layer | What it draws |
-|---|---|
-| **Text** | A template — `CPU {cpu.load:0}%  {cpu.temp:0}°C` — resolved live |
-| **Bar** | A level bar, continuous or segmented |
-| **Gauge** | A circular dial with a number in the middle |
-| **Graph** | A sparkline of the last minute: line, area or columns |
-| **Icon** | One symbol from the icon font Windows already ships |
-| **Shape** | A backing card, a divider, or ornament — brackets, rings, arcs |
-| **Image** | A file you pick, copied into the profile's assets |
-
-Drag to move, drag the handles to resize, and the properties pane on the right
-edits everything else. Hold **Alt** while dragging to bypass snapping; arrow
-keys nudge a pixel at a time, or ten with **Shift**. **Ctrl+Z** undoes, back a
-hundred steps and including a deleted profile. The
-canvas draws against the real live frame, in the orientation the panel is
-actually mounted — you edit what you will see, not a mirror of it.
-
-A **theme** — minimal, hud, terminal or neon — sets the palette, the fonts and
-the corner style for the whole profile. Layer colours are role names (`good`,
-`warm`, `track`, `panel`) rather than hex codes, so switching theme restyles
-everything coherently instead of leaving half of it behind. A literal `#RRGGBB`
-still works and is left alone.
-
-### Describing one instead
-
-With an LLM configured under **Settings → AI**, the editor's prompt box takes
-a sentence:
-
-- *"Add a clock at the center"*
-- *"Add GPU usage bottom left"*
-- *"Make a HUD style overlay with CPU and GPU"*
-- *"Show me a CPU usage graph"*
-- *"Give me a neon overlay with glowing text and shaded panels"*
-
-The model returns a compact plan — kinds, sensors, anchors, sizes — and the app
-turns that into real layers: it resolves sensor ids against what this machine
-actually has, fills in colours from the theme, and runs its own layout pass so
-nothing overlaps or falls off the panel. **The model never writes pixel
-coordinates or colours.** That division is deliberate; it is what makes a small
-local model reliable enough to be useful here.
-
-Nothing is applied until you accept it. The result banner says what changed,
-**Try again** re-rolls, and **Discard** puts back exactly what was there
-including the theme.
-
-Sensors that are unavailable draw `--` rather than a misleading zero, and a
-prompt naming a sensor this machine does not have is told so rather than
-silently producing a dead layer.
-
-### Where the numbers come from
-
-| Source | Gives |
-|---|---|
-| **PDH** (built in) | CPU load per core, memory, disk, network rates |
-| **NVML** (built in) | NVIDIA load, temperature, clocks, VRAM, power, fan |
-| **LibreHardwareMonitor** | CPU package temperature, motherboard fans, voltages |
-| **HWiNFO** | the same, if you already run it |
-
-The first two need nothing installed. **CPU temperature is the exception** —
-Windows exposes no such counter, so it needs LibreHardwareMonitor (enable its
-web server, default port 8085) or HWiNFO with shared memory support enabled.
-Both are opt-in under **Settings → Sensors**, which shows what actually
-connected and how many sensors matched.
-
-Readings are smoothed so bars glide instead of twitching; templates can ask for
-the raw figure instead.
-
-### The size budget
-
-Every frame still has to fit the panel's 80 KB ceiling after the overlay is
-blended in. Measured over a range of backdrops, a heavy 10-layer overlay reaches
-about 78% of the cap on the hardest frame and the quality loop never engages —
-so in practice the overlay costs no picture quality at all. What costs is layer
-*count*, not which effects you use; the difference between an outline, a glow
-and a pill is around a kilobyte.
-
----
-
-## Following what's playing
-
-Press **Follow music** in the window, or **Follow what's playing** on the tray,
-and the panel starts mirroring
-whatever else on the machine is playing music — a YouTube Music tab, a browser,
-a desktop player. It reads the Windows media session, the same thing that feeds
-the volume-key popup.
-
-It plays nothing and controls nothing. Your player stays the remote control;
-this only watches and draws.
-
-Two things can end up on the glass:
-
-- **The music video**, downloaded once and played from disk, when one can be
-  found.
-- **A now-playing card** when one cannot — the album art blurred across the
-  panel with the title, artist and progress over it. Most tracks on a music
-  service have no video, so this is the common case rather than a consolation
-  prize.
-
-The card is an ordinary overlay profile called **Now playing**, so it appears in
-the tray menu and can be rearranged, restyled or re-themed in the overlay editor
-like any other. The backdrop it draws on is a 960×480 JPEG the app builds
-itself, small enough to skip ffmpeg entirely — so the card works even on a
-machine that has none. While a video is being fetched, a second bar under the
-timeline shows how far along the download is.
-
-Following is remembered between runs: a display left mirroring music is still
-mirroring music after a reboot.
-
-### The track becomes sensors
-
-Whether or not the panel is following, the current track is published as
-overlay tokens, so any profile can use it:
-
-`{music.title}` `{music.artist}` `{music.album}` `{music.source}`
-`{music.state}` `{music.elapsed}` `{music.length}` `{music.remaining}`
-and, as numbers for bars and visibility rules, `music.position`,
-`music.duration`, `music.progress`, `music.playing`, `music.idle`,
-`music.fetching` and `music.fetch`.
-
-`{music.art}` is the current cover's path on disk, which an **image** layer can
-be pointed at — that is how the card shows album art, and it works in any
-profile you build yourself.
-
-Every one of these belongs to the track and none of them is inherited by the
-next one. A player that reports no length — YouTube Music in a browser often
-does not — leaves `{music.length}`, `{music.remaining}` and `music.progress`
-with nothing to say, so a layer bound to one hides itself and a token reads
-`--`. It does **not** show the length of the song that finished, which is what
-it used to do: a 1:33 track length sat on the card against a 3:29 song.
-
-### Finding the video
-
-The media session reports a title, an artist and usually a length. It never
-reports a URL, so the video has to be searched for with `yt-dlp`, and the length
-is what keeps that honest: a search for a popular song returns the track, a
-lyric video, three live cuts and an hour-long loop, and only one of them runs for
-the same number of seconds. Where the player reports no length — YouTube Music
-in a browser often does not — it falls back to matching the title and preferring
-the artist's own upload.
-
-What it picked is shown beside the preview in the main window. That line is the
-answer to "why is it showing *that*".
-
-Which video matched which track is cached in `music-cache.json`, so a song
-played twice searches once.
-
-### The video is downloaded, not streamed
-
-`yt-dlp` fetches the 720p rung to `music-videos\` and the panel plays the file.
-That is not an optimisation, it is what makes the feature work at all.
-
-YouTube serves fragmented MP4 at roughly playback rate, and ffmpeg can only seek
-one by reading the whole file to index it. Measured on a 3½-minute track, every
-seek into a stream cost **106 seconds** before the first frame appeared — the
-same whether the target was 30 seconds in or 120 — against 0.4 seconds with no
-seek at all. A downloaded file has an index, so the same seek takes 0.3 seconds.
-Joining a song already in progress, and following you when you drag the
-scrubber, are both only possible because of that.
-
-It also settles the quality question: the whole 720p rung comes down at whatever
-rate the link allows, rather than being decoded live from a throttled
-connection.
-
-And because it is a file, it is **preprocessed** like anything in the library.
-Its frames are built once into the pack cache — at whatever **Settings →
-Preprocessing** is set to — and the panel then plays those frames with no ffmpeg
-involved at all.
-
-That is what stops a music video skipping. A live stream has to commit to one
-JPEG quality up front, and it is a guess: a busy video makes frames too big for
-the panel, and those are dropped rather than sent. Preprocessed frames are
-budgeted against the panel's data rate one at a time, so none of them can be.
-Following the song gets sharper too, because a seek into preprocessed frames is
-an index rather than ffmpeg restarted on the nearest keyframe.
-
-**The video does not wait for that.** It starts as soon as it is downloaded, and
-its frames are built behind it — at low priority, one song at a time — with the
-progress shown on the card under the track, on the same bar the download uses.
-When the build finishes the panel swaps onto the frames for the rest of the song,
-and every later play of it starts from them. A song skipped past is left unbuilt
-until it comes round again.
-
-Building a new song takes up to a minute. It is not free on disk either: reckon
-about 200 MB for a three-minute track, in the same cache the library's videos
-use, oldest-unplayed evicted first. With preprocessing switched off, a followed
-video is instead surveyed for a quality whose worst frame still fits, and
-streamed as before.
-
-**Settings → Music** caps how long a video may be before it is worth fetching
-at all — a search for a song reliably turns up an hour of it on loop, and that
-is checked against the search result, before the download rather than after it.
-The default is 12 minutes.
-
-Downloads are then swept by age and by size, and **Sweep now** applies both
-immediately. The defaults keep a video for two weeks after it was last played,
-within 4 GB. Unfinished downloads left by skipping tracks are cleaned up too.
-
-### On sync
-
-The panel and your speakers are two independent streams of the same song, and
-the browser's own buffering is an offset this app cannot see or measure. The
-video starts where the song has reached and both then run at their own steady
-rate.
-
-Dragging the scrubber in the browser is followed within about a second. Small
-drift is deliberately left alone: correcting it restarts the decoder on a
-keyframe, which is more noticeable than the drift itself.
-
-Expect it to be close, not frame-accurate. For a music video that is fine.
-
----
-
-## Using the CLI
+- **Add to playlist** to build a rotation, then **Play playlist**. Stills hold for their dwell in
+  seconds; videos play through and hand over.
+- **Overlay** opens the editor; the tray menu switches overlays on and off.
+- **Follow music** mirrors whatever is playing elsewhere on the machine.
+- Closing the window hides it, and the panel keeps running. **Exit** on the tray menu is the only thing
+  that stops it.
+
+New videos are calibrated in the background as they're added, so pressing Show later is instant.
+
+**Settings.** **Rotation** compensates for however the pump head ended up mounted. It rotates 270° on
+its magnet and there is no device-side rotation command, so this is done host-side (as the vendor app
+does). **Start when I sign in** registers a logon-triggered scheduled task rather than a `Run` key,
+which buys restart-on-failure and no "stop on battery". The checkbox reads the real registered state,
+so removing the task outside the app is reflected honestly. **Preprocessing** decides whether ffmpeg
+runs for as long as something is on the panel, or only once per item; see
+[Preprocessing](docs/preprocessing.md). **About** shows the version and links.
+
+### The command line
 
 ```
 Jungle Leopard Display.exe [--port COMn] [--rotate 0|90|180|270] [--stretch]
@@ -573,289 +184,100 @@ Jungle Leopard Display.exe [--port COMn] [--rotate 0|90|180|270] [--stretch]
 "Jungle Leopard Display.exe" --video clip.gif --loop --preprocess disk --limit 2048
 ```
 
-Without `--once`, `--image` holds live mode until interrupted. `--stretch` fills
-the panel and ignores aspect ratio; the default pads with black.
+Without `--once`, `--image` holds live mode until interrupted. `--stretch` fills the panel and ignores
+aspect ratio; the default pads with black.
 
-`--hwaccel` affects **decoding only** — there is no GPU MJPEG encoder on NVENC or
-AMF (Intel's `mjpeg_qsv` is the lone exception), so the encode stays on the CPU
-either way. It pays off on high-resolution sources, where decoding dominates; on
-small inputs the extra GPU↔system copies can make it slower than plain software.
+`--hwaccel` affects **decoding only**. There is no GPU MJPEG encoder on NVENC or AMF (Intel's
+`mjpeg_qsv` is the lone exception), so the encode stays on the CPU either way. It pays off on
+high-resolution sources, where decoding dominates; on small inputs the extra GPU↔system copies can make
+it slower than plain software.
 
----
+## Documentation
 
-## How it works
-
-```
-JLDisplayCore  (static lib)   protocol · framing · ffmpeg · calibration · packs
-      │
-      ├── Jungle Leopard Display.exe    thin CLI over the core
-      │
-      └── JLDisplayNative.dll           flat C API, async workers
-                │
-                └── JungleLeopardDisplayManager.exe   WPF tray app (P/Invoke)
-```
-
-The core is a **static** library so the CLI stays a single self-contained exe;
-`JLDisplayNative.dll` exists only to give C# something to P/Invoke.
-
-Two constraints shape everything:
-
-**One port owner.** Only one process on the machine can hold the COM port, so
-the tray app is the sole owner and the GUI lives inside it. There is no IPC and
-no second binary to keep in step.
-
-**Nothing blocks the UI.** The device is a blocking serial handle fed by a child
-ffmpeg process, and calibrating a long video takes tens of seconds. So every
-content call starts a native worker and returns immediately; C# polls a status
-struct every 250 ms. Calibration is separately cancellable — without that,
-picking a large video would wedge the UI until it finished.
-
-Some consequences worth knowing if you touch this code:
-
-- The core's **log sink is per-thread**. Background calibration runs alongside
-  playback, and a global sink would interleave their progress into one garbled
-  line.
-- `jl::Device` is **internally locked at whole-message granularity**. That's why
-  a brightness change from the UI thread lands cleanly between two video frames
-  instead of halfway through a JPEG.
-- The DLL mirrors the connection flag rather than calling `Device::IsOpen()`
-  under the status lock — the core takes the status lock (via the log sink)
-  while holding the device lock, so querying the other way round deadlocks.
-- The native side plays **one item**; the playlist lives in C#. Timing-critical
-  work stays in C++, scheduling stays where it's easy to write and persist.
-- The **overlay is composited natively**, inside the frame path, because the
-  panel has no overlay plane: every frame is decoded, blended and re-encoded on
-  the way past. C# renders the overlay to a bitmap on its own thread and hands
-  it over; C++ blends and re-encodes. Drawing is where WPF is good, and the
-  frame path is where C++ has to be.
-
-### Native API
-
-```c
-int32_t jl_open(const wchar_t* port);          // NULL = autodetect
-void    jl_close(void);
-int32_t jl_show_image(const wchar_t*, const JlRenderOpts*);   // async
-int32_t jl_play_video(const wchar_t*, const JlRenderOpts*);   // async
-int32_t jl_calibrate (const wchar_t*, const JlRenderOpts*);   // blocking, device-free
-void    jl_stop(void);
-void    jl_get_status(JlStatus*);              // poll this
-int32_t jl_get_last_frame(uint8_t*, int32_t);  // the JPEG actually on the glass
-```
-
-Full contract in [`JLDisplayNative/jl_api.h`](JLDisplayNative/jl_api.h). The C#
-side checks `sizeof(JlRenderOpts) == 100` and `sizeof(JlStatus) == 1184` at
-startup, so struct drift fails loudly instead of corrupting memory silently.
-
----
-
-## Where things are stored
-
-| Path | What |
+| Page | What's in it |
 |---|---|
-| `%LOCALAPPDATA%\JungleLeopardDisplay\settings.json` | manager settings |
-| `%LOCALAPPDATA%\JungleLeopardDisplay\library.json` | library and playlist |
-| `%LOCALAPPDATA%\JungleLeopardDisplay\thumbnails\` | extracted video frames |
-| `%LOCALAPPDATA%\JungleLeopardDisplay\downloads\` | videos fetched from YouTube |
-| `%LOCALAPPDATA%\JungleLeopardDisplay\overlays.json` | overlay profiles and layers |
-| `%LOCALAPPDATA%\JungleLeopardDisplay\overlay-assets\` | images used by overlay layers |
-| `%LOCALAPPDATA%\JungleLeopardDisplay\music-art\` | album art and blurred backdrops, cache |
-| `%LOCALAPPDATA%\JungleLeopardDisplay\music-cache.json` | which video matched which track |
-| `%LOCALAPPDATA%\JungleLeopardDisplay\music-videos\` | downloaded music videos, swept by age and size |
-| `%LOCALAPPDATA%\JungleLeopardDisplay\manager.log` | connection events, errors |
-| `%LOCALAPPDATA%\jl_display\calibration.txt` | **shared** with the CLI |
-| `%LOCALAPPDATA%\jl_display\packs\*.jlp` | preprocessed video frames, **shared** |
-| `%LOCALAPPDATA%\jl_display\packs\*.jlf` | preprocessed stills, **shared** |
+| [Preprocessing](docs/preprocessing.md) | Packs, the memory and disk caches, per-frame quality and the data rate |
+| [Overlays](docs/overlays.md) | Layers, themes, describing an overlay in words, sensors, the size budget |
+| [Following what's playing](docs/music.md) | The media session, finding the video, sync |
+| [AI image pipeline](docs/ai-pipeline.md) | SwarmUI, prompt enhancement, where images go, keys |
+| [How it works](docs/architecture.md) | Architecture, the native API, where data is stored, the repository layout |
+| [Protocol notes](docs/protocol.md) | The panel's serial protocol, recovered from the vendor app |
+| [Troubleshooting](docs/troubleshooting.md) | Common problems, and known rough edges |
+| [Brand](docs/brand.md) | The KruxSYS colours, type and marks this app uses |
+| [Audit, 1.7.0](docs/audit-1.7.0.md) | Every finding of the 1.7.0 code review and what was done about it |
 
-The calibration cache is keyed on each file's absolute path, size, timestamp and
-filter chain, so re-encoding or replacing a video invalidates its entry
-automatically — and a video calibrated in one program is instant in the other.
+## Building
 
-Packs are keyed on the same material plus the frame rate and either the
-calibrated quality or the per-frame cap and byte budget, and the key is the
-filename, so a stale pack can never be mistaken for a
-current one — it simply stops being looked up and ages out. The CLI and the
-manager share them the same way they share calibration.
+Requires **Visual Studio 2022** (v143 toolset, C++ and .NET desktop workloads) and the **.NET 9 SDK**.
 
----
-
-## Protocol notes
-
-**Serial.** CDC-ACM at 115200/8-N-1 (the rate is advisory), DTR and RTS asserted,
-no flow control. Found by walking the ports class for hardware ID
-`VID_33C3&PID_7788` and reading `PortName` from its device registry key.
-
-**Control frames.**
-
-```
-55 AA | length (u16 LE) | cmd | payload… | checksum (u16 LE)
+```sh
+msbuild "Jungle Leopard Display.sln" -p:Configuration=Release -p:Platform=x64 -restore
 ```
 
-`length` counts the whole frame (`payload + 7`). The checksum is a plain 16-bit
-sum of every preceding byte.
+Everything that ships lands in `x64\Release\`, native and managed together, so `DllImport` resolves
+with no probing paths. The two test projects build into `test-out\` and never into the drop:
 
-| Cmd | Meaning | Reaches this panel |
-|---|---|---|
-| `0x01` | Restart | yes |
-| `0x03` | Set backlight (one byte, 0–100) | yes |
-| `0x06` | Get device info (replies with JSON) | yes |
-| `0x0C` | Begin OTA firmware flash | yes |
-| `0x11` | Enter / hold live mode | yes |
-| `0x14` | Set motion-before-off | yes |
-| `0x15` | Set motion timeout | firmware >= 2.8 |
-| `0x20` | Set region (UTF-8 string) | yes |
-| `0x21` | Close | firmware >= 3.1 |
-| `0x23` | Set serial number, then reboot | yes |
-| `0x25` | Set motor — open (`1`) / close (`2`) | only when region is `ycc28_v1` |
-| `0x26` | Set real-time timeout | firmware >= 4.1, so never here |
-
-The right-hand column is the condition the vendor app checks before it will send
-that command, taken from `main/_baseClass/device.js` and evaluated against this
-panel (firmware 3.1). Only `0x03`, `0x06` and `0x11` are sent from this project.
-
-**`0x25` is not a pump-speed control.** The payload is one byte: `1` opens, `2`
-closes. A 60-second CPU-temperature poll drives it — above the configured
-threshold (default 50 °C) it opens, below it closes — and the device stays busy
-for `actionTimeout` seconds afterwards, 35 by default, rejecting further
-commands. It only runs on hardware whose region has been set to `ycc28_v1` via
-`0x20`, which is not this one.
-
-**`0x0C` and `0x23` are documented but not implemented, on purpose.** `0x23`
-takes a serial number, writes it to the panel and reboots into it. `0x0C` takes
-`F2 FF` followed by the firmware size as a 32-bit little-endian value, after
-which the `.bin` streams through the image envelope below. Neither is gated away
-from this hardware, and both are one bad byte from a panel that no longer
-enumerates.
-
-**Image frames use a different envelope** — no `55 AA`, no command byte:
-
-```
-length (u32 LE) | JPEG bytes… | checksum (u16 LE)
+```sh
+test-out\x64\Release\JLDisplayCore.Tests.exe                 # native core, no device needed
+dotnet test test-out\managed\JLDisplayManager.Tests.dll      # manager logic, theme, interop
 ```
 
-The checksum covers the length bytes too.
+Release builds emit **no PDBs**: `DebugInformationFormat` is `None` and `GenerateDebugInformation` is
+`false` for every Release configuration, and the manager sets `DebugType=none`. Debug configurations
+keep their symbols, though the solution maps `Debug|x64` onto `Release|x64` for every project, so a
+plain solution build never produces any. Native code builds clean at `/W4`.
 
-**Live mode lapses** unless `0x11` is re-sent about every **1500 ms**. This is
-why showing a still keeps a thread alive rather than firing and forgetting.
+The icons and installer art are generated from `assets/brand/*.svg` by `python3 tools/make_icons.py`
+(Inkscape and Pillow). The outputs are committed, so building never needs Python.
 
-**A still must be re-sent, not sent once.** The panel commits a frame only when
-the bytes behind it arrive, and it needs a moment after `0x11` before it takes
-pixels at all. Video hides both — ffmpeg's startup covers the mode change and
-the next frame is 33 ms away — but a picture written once and then left alone
-stays half-drawn on the glass. `HoldStill` re-sends the same frame every
-**250 ms**, a fifth of the bandwidth playback already sustains.
+## Releasing
 
-**Stills must be 4:2:0, like every video frame.** ffmpeg matches the JPEG
-encoder to its *input*, so video (`yuv420p`) lands on `yuvj420p` while an RGB
-still (PNG, BMP, a screenshot) lands on a 4:4:4 layout this panel cannot
-decode. The image path pins `-pix_fmt yuvj420p`, and the "already conforms,
-send as-is" shortcut checks the SOF marker for baseline 4:2:0 rather than
-trusting the dimensions alone.
-
-**Before talking to the device**, the vendor app sends `FF D9 FF D9` (a JPEG
-end-of-image marker, flushing any partial frame), pauses, then four zero bytes.
-This client does the same.
-
-**Size limits.** Frames must be ≤ **80 KB**. Video calibration targets **64 KB**
-to leave headroom, by encoding every *keyframe* in the file (`-skip_frame nokey`,
-so inter-frames are never reconstructed) and walking `-q:v` up through
-`3,4,5,7,9,12,16,20,25,31` until the worst keyframe fits. Keyframes are
-intra-coded and therefore the most detailed frames in the stream, which makes
-them a conservative proxy. Surveying the *whole* file matters — calibrating on
-the first few seconds badly underestimates a video that gets busier later.
-
-A preprocessed item can do better: see [quality per frame](#quality-per-frame),
-which budgets each frame out of a data rate instead and does not calibrate at
-all. Note the difference between the two limits — 80 KB is what one frame may
-be, and it is *not* 30 times that per second.
-
-**SPI-class panels.** If the image path doesn't work on your unit, check
-`checkIsSPI()` in the vendor app's `main/util/common.js` against your model
-string. Those take raw RGB565 big-endian with **no** length header and no
-checksum — `((r>>3)<<11) | ((g>>2)<<5) | (b>>3)` as u16 BE per pixel. Control
-commands are identical either way; only the pixel path differs.
-
----
-
-## Troubleshooting
-
-**"COM7 is in use by another program"** — something else holds the port: the
-vendor app, a running CLI, or the manager itself. In the manager, use
-**Settings → Release device** to hand it over, then **Reconnect** to take it
-back.
-
-**The panel is stuck on an old frame after the machine slept** — this was a real
-bug and is fixed; if you see it again, the log is the place to look. The manager
-now releases the port when Windows says it is suspending and reopens it on wake,
-because neither the handle nor the port going stale is something the host can
-detect: the panel will happily accept writes it is no longer drawing. You should
-see `suspending: released the panel` and then `resumed: reconnecting to the
-panel` in `manager.log`. This needs **Auto-reconnect** on; with it off, a wake
-leaves the panel released deliberately, and the log says so.
-
-**"ffmpeg.exe not found"** — install it, or drop `ffmpeg.exe` next to the
-binaries. The manager checks once at startup and says so via a tray balloon,
-rather than failing identically on every item.
-
-**Nothing appears, no error** — the panel drops out of live mode after ~1.5 s
-without a keepalive. If you're driving it yourself, keep sending `0x11`.
-
-**Video is choppy** — check the dropped-frame count in the status line. Frames
-over 80 KB are skipped; force a lower quality with `--quality 12` or
-`--recalibrate`.
-
-**"cannot reach SwarmUI"** — SwarmUI isn't running, or is on another port.
-Check the address in the AI window and press **Test**; a working server reports
-its version and model count.
-
-**AI images generate but never appear** — the playlist and the AI slideshow both
-drive the one panel, and starting either stops the other. **Start** in the AI
-window is what hands the panel over.
-
-**Enhanced prompts look like chat** — the enhancer strips code fences, quotes and
-lead-in lines, but a model that ignores the system prompt entirely will still
-produce prose. Lower the temperature, or reword the system prompt under
-*Instructions and limits*.
-
-**Build says `pwsh.exe is not recognized`** — that's vcpkg's `applocal.ps1`
-integration trying PowerShell 7 and falling back to `powershell.exe`. Harmless;
-install pwsh to quiet it.
-
----
-
-## Repository layout
-
-```
-JLDisplayCore/        protocol, device I/O, ffmpeg, calibration cache, frame packs
-JLDisplayNative/      flat C API over the core, for P/Invoke
-JLDisplayManager/     WPF tray app (net9.0-windows, x64)
-  Services/Ai/        SwarmUI client, LLM clients, prompt enhancer, pipeline
-  Services/Music/     media-session follower, album art, video resolver
-Jungle Leopard Display/   the CLI
-docs/                 screenshots
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\release.ps1
 ```
 
-### Known rough edges
+Needs, in addition to the above, [Inno Setup](https://jrsoftware.org/isinfo.php) 6.6 or later. One
+command:
 
-- The solution maps **`Debug|x64` to `Release|x64`** for every project. That's
-  inherited from the original `.sln`; the new projects mirror it so CRT settings
-  match and linking works. It does mean "Debug" builds optimised code.
-- Per-item rotation and stretch overrides exist in the model and are honoured at
-  playback, but have no UI yet — only dwell time is editable per item.
-- x64 only. The `Win32` solution configurations build the native projects but
-  not the manager.
-- The Anthropic client is raw HTTP rather than the official SDK, to keep the
-  portable drop free of third-party assemblies. It covers one POST to
-  `/v1/messages`; anything more — tools, streaming — would be worth the
-  dependency instead.
-- The AI pipeline generates one image at a time. SwarmUI will happily batch, and
-  a backend with the VRAM for it is left idle between requests.
+1. checks that `<Version>` in `JLDisplayManager.csproj` and `JLDisplayCore\jl_version.h` agree,
+2. rebuilds Release x64 from clean and stops on any warning,
+3. runs both test suites,
+4. stages exactly the shipped files and writes `dist\JungleLeopardDisplay-<version>-win-x64-setup.exe`
+   and `dist\JungleLeopardDisplay-<version>-win-x64-portable.zip`.
 
----
+To cut a release: bump both version numbers, add `dist\RELEASE-NOTES-<version>.md`, run the script, and
+attach the two files to a GitHub release.
+
+## Architecture
+
+```
+JLDisplayCore   (static lib)  protocol · device I/O · ffmpeg · calibration · packs · overlay compositing
+  │
+  ├── Jungle Leopard Display.exe    thin CLI (single self-contained exe)
+  │
+  └── JLDisplayNative.dll         flat C API, async workers
+            │
+            └── JungleLeopardDisplayManager.exe   WPF tray app (net9.0-windows, P/Invoke)
+```
+
+The core is static, so the CLI stays one exe; the DLL exists only to give C# something to P/Invoke.
+Nothing blocks the UI: every content call starts a native worker and returns, and the manager polls a
+status struct every 250 ms. Overlays are drawn by the manager and composited natively into every
+frame. See [How it works](docs/architecture.md) for the rest, including where data is stored.
+
+## Other KruxSYS projects
+
+- **[Plexdio](https://github.com/KruxSYS/plexdio)**: a small, native Windows music player for Plex.
+  [plexdio.kruxsys.com](https://plexdio.kruxsys.com) · [project page](https://kruxsys.com/projects/plexdio/)
+- **[Krunk](https://krunk.kruxsys.com)**: a fast, private web browser for Windows, Android and Android TV.
+  [krunk.kruxsys.com](https://krunk.kruxsys.com) · [project page](https://kruxsys.com/projects/krunk/)
+
+More at [kruxsys.com](https://kruxsys.com/).
 
 ## Credit
 
-Protocol reverse-engineered from the vendor Electron application. This project
-ships no vendor code.
+Protocol reverse-engineered from the vendor Electron application (`resources/app.asar`,
+`main/_baseClass/device.js`) and verified against firmware 3.1. This project ships no vendor code.
 
 ## Donations
 
@@ -863,3 +285,10 @@ BTC
 ```
 bc1q3evq9z0scme5repkz5gmsza3tyfeaqwfqx8xa7trnjmh7a7yk8ts55xgfv
 ```
+
+---
+
+<p align="center">© 2026 KruxSYS</p>
+
+[repo]: https://github.com/KruxSYS/jungle-leopard-display
+[releases]: https://github.com/KruxSYS/jungle-leopard-display/releases

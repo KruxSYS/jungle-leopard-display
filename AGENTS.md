@@ -6,13 +6,23 @@ Instructions for working in this repo. Keep it true; delete stale or generic lin
 
 Drive a **TZMRIT PF360 / "Jungle Leopard"** pump LCD (960×480 panel on an AIO
 cooler head) from Windows. Windows 10/11, **x64 only**. Reverse-engineered
-protocol (firmware 3.1). See `README.md` for full detail; this is the
-hard-earned context an agent would otherwise guess wrong.
+protocol (firmware 3.1). A **KruxSYS** product since 1.7.0 ("Jungle Leopard
+Display by KruxSYS"); the product name, exe names, data paths, mutex and
+scheduled-task names did **not** change with the rebrand and must not, or
+existing users lose their library. `README.md` is the user-facing front page,
+the depth lives in `docs/*.md`; this file is the hard-earned context an agent
+would otherwise guess wrong.
 
 ## Build & verify
 
-No test project ships in the solution — verify by building, and for anything
-touching the overlay, **by rendering it and looking at it**. That is not a
+Two test projects ship in the solution, and they are necessary, not
+sufficient: `JLDisplayCore.Tests` (native console exe, plain checks, no
+framework) and `JLDisplayManager.Tests` (xUnit). Both build into `test-out\`,
+**never** `x64\Release\` - that folder is the release drop. Run them with
+`test-out\x64\Release\JLDisplayCore.Tests.exe` and
+`dotnet test test-out\managed\JLDisplayManager.Tests.dll`; `tools/release.ps1`
+refuses to package if either fails. Neither can see the panel. For anything
+touching the overlay, verify **by rendering it and looking at it**. That is not a
 figure of speech: the overlay bugs that assertions missed and a rendered image
 caught include an auto-scaled bar chart implying load on an idle GPU, a graph
 fill drawing grey under a green line, and a glow that read as a halo at 44 px
@@ -26,14 +36,18 @@ msbuild "Jungle Leopard Display.sln" -p:Configuration=Release -p:Platform=x64 -r
 
 - Output lands in `x64\Release\` (native + managed together) so `DllImport`
   resolves with no probing paths.
-- **Solution quirk:** `Debug|x64` maps onto `Release|x64` for **all four**
-  projects — inherited from the original `.sln`. So a plain solution build, in
+- **Solution quirk:** `Debug|x64` maps onto `Release|x64` for **every**
+  project (the two test projects mirror it, and are not built for the x86
+  solution configurations) — inherited from the original `.sln`. So a plain solution build, in
   any configuration, produces fully optimised code.
 - **A solution build never emits PDBs.** Native Release sets
   `DebugInformationFormat=None` / `GenerateDebugInformation=false`, and the
   manager sets `DebugType=none` unconditionally.
 - The `x86` solution configuration builds the native projects as `Win32` but
   the manager as `x64` (it is `<Platforms>x64</Platforms>`).
+- **Zero warnings is the baseline**, native at **`/W4`** (raised in 1.7.0 when
+  an audit build at /W4 came out clean) and C# with nullable on.
+  `tools/release.ps1` fails on any warning, so a new one blocks a release.
 - **Native DLL build-order gotcha:** `JLDisplayManager.csproj` pins
   `<SetPlatform>Platform=x64</SetPlatform>` on the `JLDisplayNative` vcxproj
   reference. Letting the platform float → MSBuild builds the vcxproj a second
@@ -42,17 +56,21 @@ msbuild "Jungle Leopard Display.sln" -p:Configuration=Release -p:Platform=x64 -r
 
 ## Native ↔ managed interop (touch both sides)
 
-`JLDisplayManager/Interop/NativeMethods.cs` **blits** structs into
-`JLDisplayNative.dll` — it is not field-by-field marshalled, so a layout drift
-corrupts memory silently. `VerifyLayout()` checks `sizeof(JlRenderOpts)==100`
-and `sizeof(JlStatus)==1184` at startup, turning drift into one clear exception.
+`JLDisplayManager/Interop/NativeMethods.cs` copies structs to and from
+`JLDisplayNative.dll` **by layout** (sequential, fixed-size strings), so a layout
+drift corrupts memory silently. It is guarded from both sides:
+`VerifyLayout()` checks the managed sizes at startup (`JlRenderOpts==100`,
+`JlStatus==1184`, `JlMediaStatus==1832`), and `static_assert`s in `jl_api.cpp`
+check the native sizes at compile time. The xUnit `InteropTests` also pin key
+field offsets.
 (`JlStatus` was 1128 originally; 1144 with the playback-position doubles; 1168
 with the four overlay diagnostics; 1184 now those carry the composed frame size
 and the over-budget count. `JlRenderOpts` was 88 before the two per-frame
 quality fields, 96 before its byte rate.)
 
 If you change a struct in `JLDisplayNative/jl_api.h`, update the matching C#
-struct **and** the expected sizes in `VerifyLayout()`.
+struct, the sizes in `VerifyLayout()`, the `static_assert`s in `jl_api.cpp` and
+`InteropTests`, together.
 
 ## Runtime prerequisites
 
@@ -121,6 +139,9 @@ JLDisplayCore   (static lib)  protocol · device I/O · ffmpeg · calibration ·
 
 ## Manager specifics
 
+- **First run shows the window** even though "Start hidden" defaults to on:
+  with no `settings.json` yet nobody knows to look in the tray (audit M9). The
+  logon task passes `--startup` and stays hidden.
 - Entry point: `JLDisplayManager/App.xaml.cs`. `ShutdownMode = OnExplicitShutdown`
   — closing the window hides it (panel keeps running); **Exit** on the tray stops
   the process.
@@ -129,6 +150,68 @@ JLDisplayCore   (static lib)  protocol · device I/O · ffmpeg · calibration ·
 - AI pipeline is **off by default**; SwarmUI at `http://localhost:7801`. API keys
   DPAPI-encrypted, base64 in `%LOCALAPPDATA%\JungleLeopardDisplay\ai.json`.
 - `--hwaccel` affects **decoding only** (no GPU MJPEG encoder on NVENC/AMF).
+
+## Theme (KruxSYS)
+
+**Every colour, radius and border width in the manager is a key in
+`JLDisplayManager/Themes/KruxSYS.xaml`** - cyan on navy, square corners, see
+`docs/brand.md` for each token's source and the contrast table. Views use
+`{StaticResource Key}`; code uses `Theme.Brush("Key")`, `Theme.Color("Key")`
+(reads `KeyColor`) or `Theme.Gdi("Key")` for the WinForms tray menu
+(`Themes/Theme.cs`). **Never write a hex colour, `Color.FromRgb` or
+`Brushes.X` anywhere else**: `ThemeTests` scans every `.xaml`/`.cs` and fails
+the build's test run on one, and also fails if a view asks for a resource key
+that does not exist (a mistyped StaticResource is otherwise a crash the first
+time that window opens).
+
+The one exception is **overlay content** - `Models/Overlay/*`,
+`Services/Overlay/Palette.cs`, a layer's default colour in `PropertyPanel`.
+That is what gets drawn on the user's panel, and the rebrand deliberately did
+not touch it. App chrome and panel content are different things; keep them so.
+
+- Amber (`#ffb547`) is the brand's **release-status** colour and appears only in
+  README badges. The old app accent was amber; do not bring either back into
+  the UI.
+- System chrome does not take the theme, so the system-drawn controls are
+  templated in the dictionary: ComboBox (with `PART_EditableTextBox` for the
+  editable ones), CheckBox, Slider, ScrollBar, Expander, ProgressBar,
+  TextBox/PasswordBox, ListBoxItem, ToolTip, ContextMenu. A new control type
+  needs a template there or it comes out light.
+- `System.Windows.MessageBox` cannot be styled. Files alias
+  `using MessageBox = JLDisplayManager.Views.Dialog;` - same signatures, themed.
+  Use the alias in any new file that shows a message box.
+- Title bars are coloured through DWM for every `Window` by a class handler
+  (`Theme.HookWindows`, called in `OnStartup`) - nothing to do per window.
+- The tray icon is the **16 px frame** of `app.ico`, loaded from the embedded
+  resource at `SystemInformation.SmallIconSize`. `ExtractAssociatedIcon`
+  only ever returns the 32 px frame and Windows shrinks it to mush.
+
+## Brand assets, installer, release
+
+- `assets/brand/`: `kruxsys.svg` (the official logo, byte-identical to
+  kruxsys.com's - never edit it), `jungle-leopard.svg` (product mark, ≥32 px),
+  `jungle-leopard-24.svg` and `jungle-leopard-small.svg` (hand pixel-aligned 24
+  and 16 px variants; the ring and letters do not survive scaling below 32).
+- `tools/make_icons.py` (Inkscape + Pillow) renders them into both `app.ico`
+  files (16-256, one designed frame per size, verified after writing), the
+  README PNGs and `installer/wizard-*.bmp`. Outputs are committed; re-run and
+  commit together after touching an SVG.
+- **Version lives in two places that must agree:** `<Version>` in
+  `JLDisplayManager.csproj` and `JLDisplayCore/jl_version.h` (native
+  VERSIONINFO via the `.rc` files). `release.ps1` and `ReleaseTests` both fail
+  if they differ.
+- `installer/jungle-leopard-display.iss` (Inno Setup **6.6+**, for `WizardStyle=
+  modern dark`): per-user to `%LOCALAPPDATA%\Programs` with no UAC, all-users
+  when elevated; closes the running manager (Restart Manager, then the instance
+  mutex); uninstall deletes the logon task and **keeps** user data. The file
+  must stay **UTF-8 with BOM** (the © sign). In its `[Code]`, a brace constant
+  like `{app}` inside a `{ }` Pascal comment ends the comment - use `//`.
+- `tools/release.ps1` is the release: version check, clean rebuild, zero
+  warnings, both test suites, staging by explicit file list, then
+  `dist\JungleLeopardDisplay-<ver>-win-x64-setup.exe` and `-portable.zip`.
+  It pins Visual Studio **2022** via vswhere (`[17.0,18.0)`); a newer VS
+  installed beside it would otherwise be picked.
+- Nothing is code-signed (as with Plexdio).
 
 ## Per-frame quality
 
@@ -672,11 +755,28 @@ period with `timeBeginPeriod(1)` and puts it back in the destructor. Never both
   deleted, only ignored; they age out against the disk budget.
 - Per-item rotation/stretch overrides exist in the model, honoured at playback,
   but have **no UI** yet.
-- **ComboBox items render through a generated `TextBlock`**, which picks up the
-  app's implicit `TextBlock` style — an explicit setter that beats anything
-  inherited, so combos render as invisible text. The fix is the `ComboText`
-  `DataTemplate` in `App.xaml`, **not** a `Foreground` on the ComboBox. That was
-  tried first and does nothing.
+- **ComboBoxes are dark all the way down** (templated in `KruxSYS.xaml`), so
+  the implicit light `TextBlock` style is right for their items and nothing sets
+  a per-item `Foreground` any more. Before 1.7.0 the combo kept light system
+  chrome and every item carried a dark ink to stay visible; do not reintroduce
+  that. `ComboText` remains as a key because code builds combos with it.
+- **Every child process gets an explicit handle list.** `StartFfmpegPipe` uses
+  `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`: with plain inheritance, a child started on
+  one thread inherited another thread's pipe write end, that pipe never reached
+  EOF, and `jl_stop` froze the UI for the length of an unrelated pack build
+  (audit H1). The pack file's `"N"` flag was an earlier instance of the same
+  leak. Any new `CreateProcess` with inheritance on gets the same treatment.
+- **A C# child process whose output is redirected must have it read**, and
+  every wait needs a timeout (audit M1, M2). Pass yt-dlp a `--` before any id or
+  URL: YouTube ids can start with `-` (audit M3).
+- **A settings/library file that will not parse is moved aside**
+  (`name.corrupt-<timestamp>`) before defaults are used, so the next save cannot
+  destroy it (audit H3). Keep that in `Storage.Load`.
+- `Fnv1aHex`'s offset basis is the standard FNV-1a basis with a digit missing.
+  Every pack and calibration key on every machine depends on it; the native
+  tests pin it. Changing it is a deliberate cache break, not a fix.
+- `docs/audit-1.7.0.md` is the last full review: findings, fixes, what was
+  checked and found sound, and what still needs the panel to verify.
 - **Do not load `App.xaml` as a `ResourceDictionary`** in a test harness: it is
   the `ApplicationDefinition`, so parsing it constructs a second `App` and WPF
   throws "cannot create more than one Application instance". Instantiate `App`
@@ -687,5 +787,5 @@ period with `timeBeginPeriod(1)` and puts it back in the destructor. Never both
 - The Anthropic client is raw HTTP (not the SDK) to keep the portable drop free
   of third-party assemblies.
 - `.gitattributes` forces **CRLF** on `*.sln`, `*.vcxproj`, `*.filters`,
-  `*.csproj`, `*.props`, `*.targets`, `*.manifest`;
-  `*.png/.ico/.jpg/.dll/.lib/.exe/.pdb` stay binary.
+  `*.csproj`, `*.props`, `*.targets`, `*.manifest`, `*.rc`, `*.iss`;
+  `*.png/.ico/.jpg/.bmp/.dll/.lib/.exe/.pdb` stay binary.
