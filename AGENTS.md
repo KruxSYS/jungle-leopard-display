@@ -165,7 +165,7 @@ that does not exist (a mistyped StaticResource is otherwise a crash the first
 time that window opens).
 
 The one exception is **overlay content** - `Models/Overlay/*`,
-`Services/Overlay/Palette.cs`, a layer's default colour in `PropertyPanel`.
+`Services/Overlay/Palette.cs` (a new colour's default is `ColourStop.DefaultColour`).
 That is what gets drawn on the user's panel, and the rebrand deliberately did
 not touch it. App chrome and panel content are different things; keep them so.
 

@@ -78,8 +78,7 @@ below excludes them by name.
 ```sh
 grep -rnE '#[0-9A-Fa-f]{6}' --include=*.xaml --include=*.cs JLDisplayManager \
   | grep -v -e /obj/ -e Themes/KruxSYS.xaml -e Models/Overlay/ -e Services/Overlay/Palette.cs
-# expected: two lines in Views/Overlay/PropertyPanel.cs, both overlay content
-# (a layer's default colour, and a doc comment showing the stop syntax)
+# expected: nothing
 ```
 
 ## Contrast

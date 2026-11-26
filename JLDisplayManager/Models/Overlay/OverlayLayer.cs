@@ -88,8 +88,15 @@ public sealed class ColourStop
 {
     public double AtOrAbove { get; set; }
 
+    /// <summary>
+    /// Opaque white: what a colour on an overlay starts as when nothing has
+    /// set one. Panel content, so it lives with the overlay model rather than
+    /// in the app's theme.
+    /// </summary>
+    public const string DefaultColour = "#FFFFFFFF";
+
     /// <summary>"#RRGGBB" or "#AARRGGBB".</summary>
-    public string Colour { get; set; } = "#FFFFFFFF";
+    public string Colour { get; set; } = DefaultColour;
 }
 
 /// <summary>

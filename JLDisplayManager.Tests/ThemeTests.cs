@@ -92,12 +92,8 @@ public class ThemeTests
         @"Services\Overlay\Palette.cs",
     };
 
-    /// <summary>PropertyPanel lines that are overlay content (documented in docs/brand.md).</summary>
-    private static readonly string[] ColourAllowedLines =
-    {
-        "set(v ?? \"#FFFFFFFF\")",            // a new layer's default colour
-        "Threshold stops, as one line of text", // doc comment showing the syntax
-    };
+    /// <summary>Individual lines allowed a colour outside those files. None, now.</summary>
+    private static readonly string[] ColourAllowedLines = { };
 
     [Fact]
     public void No_hard_coded_colours_outside_the_theme()

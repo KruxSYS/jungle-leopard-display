@@ -472,7 +472,7 @@ public sealed class PropertyPanel : StackPanel
     }
 
     private StackPanel Colour(string label, Func<string> get, Action<string> set) =>
-        Labelled(label, ColourEditor(get, v => set(v ?? "#FFFFFFFF")));
+        Labelled(label, ColourEditor(get, v => set(v ?? ColourStop.DefaultColour)));
 
     private StackPanel ColourNullable(string label, Func<string?> get, Action<string?> set) =>
         Labelled(label, ColourEditor(get, set));
@@ -559,7 +559,8 @@ public sealed class PropertyPanel : StackPanel
     }
 
     /// <summary>
-    /// Threshold stops, as one line of text: "0=#FF4AD995, 70=#FFFFB43A".
+    /// Threshold stops, as one line of text: "value=colour" pairs separated by
+    /// commas, each colour in the usual ARGB hex.
     /// A grid of colour pickers would be a lot of surface for something most
     /// profiles set once and never touch.
     /// </summary>
